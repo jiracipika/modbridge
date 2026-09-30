@@ -1,0 +1,10 @@
+# One rule per line: from-package/ = to-package/   (internal names, trailing slash required)
+# NeoForge's fork layout: mod-API classes live under net.neoforged.neoforge.*, while
+# framework libraries were re-rooted directly under net.neoforged.<lib>.
+# More-specific prefixes first; the bare forge->neoforged line is the fallback.
+net/minecraftforge/registries/=net/neoforged/neoforge/registries/
+net/minecraftforge/common/=net/neoforged/neoforge/common/
+net/minecraftforge/event/=net/neoforged/neoforge/event/
+net/minecraftforge/eventbus/=net/neoforged/bus/
+net/minecraftforge/fml/=net/neoforged/fml/
+net/minecraftforge/=net/neoforged/

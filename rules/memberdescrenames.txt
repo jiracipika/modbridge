@@ -1,0 +1,6 @@
+# One rule per line: owner|name|oldDescriptor=newDescriptor   (OLD-space, call sites + decls)
+# 1.20.1 CommandSourceStack.sendSuccess returned boolean; 1.21.1 returns void. Call-site
+# descriptors must match or method resolution fails (NoSuchMethodError).
+# Limitation: only valid when the caller ignores the return value; value-consuming call
+# sites need a shim (roadmap).
+net/minecraft/commands/CommandSourceStack|sendSuccess|(Ljava/util/function/Supplier;Z)Z=(Ljava/util/function/Supplier;Z)V

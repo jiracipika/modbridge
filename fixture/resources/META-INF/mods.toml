@@ -1,0 +1,23 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="modbridgefixture"
+version="1.0.0"
+displayName="ModBridge Fixture"
+description='''Translation-layer test fixture written against 1.20.1 Forge APIs.'''
+
+[[dependencies.modbridgefixture]]
+modId="forge"
+type="required"
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.modbridgefixture]]
+modId="minecraft"
+type="required"
+versionRange="[1.20.1]"
+ordering="NONE"
+side="BOTH"

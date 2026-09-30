@@ -1,0 +1,6 @@
+# One rule per line: old-internal-name<TAB>new-internal-name
+# Forge's RegistryObject died in the fork; NeoForge uses DeferredHolder (same erased
+# surface for get()/getId()/isPresent()).
+net/minecraftforge/registries/RegistryObject	net/neoforged/neoforge/registries/DeferredHolder
+# The game event bus moved class too: MinecraftForge -> NeoForge (field EVENT_BUS kept).
+net/minecraftforge/common/MinecraftForge	net/neoforged/neoforge/common/NeoForge

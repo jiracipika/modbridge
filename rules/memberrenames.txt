@@ -1,0 +1,5 @@
+# One rule per line: owner|methodDescriptor|oldName=newName   (OLD-space owner+descriptor)
+# RegistryObject.isPresent() has no DeferredHolder equivalent; Holder.isBound() is the
+# declared-on-class replacement (isPresent only exists as an interface default, which
+# invokevirtual resolution cannot reach).
+net/minecraftforge/registries/RegistryObject|()Z|isPresent=isBound

@@ -1,0 +1,6 @@
+build/
+out/*.jar
+tools/lib/*.jar
+testenv/server-121/
+testenv/server-121-session/
+*.log
