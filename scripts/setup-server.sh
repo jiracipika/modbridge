@@ -14,6 +14,7 @@ cat > "$TGT/user_jvm_args.txt" <<JVM
 -Xmx2048M
 -Dlog4j2.formatMsgNoLookups=true
 -Dterminal.ansi=false
+-javaagent:$MB/out/modbridge-agent.jar
 JVM
 echo "eula=true" > "$TGT/eula.txt"
 cat > "$TGT/server.properties" <<PROPS

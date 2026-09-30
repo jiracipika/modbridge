@@ -98,32 +98,75 @@ public class Rewriter {
     }
 
     void loadRules(Path rulesDir) throws IOException {
-        for (String line : readLines(rulesDir.resolve("packagerenames.txt"))) {
+        addPackageRules(readLines(rulesDir.resolve("packagerenames.txt")));
+        addTypeRules(readLines(rulesDir.resolve("typerenames.txt")));
+        addMemberRules(readLines(rulesDir.resolve("memberrenames.txt")));
+        addDescRules(readLines(rulesDir.resolve("memberdescrenames.txt")));
+        printRuleStats();
+    }
+
+    /** rules bundled inside the agent jar (Connector-style drop-in operation) */
+    void loadRulesFromClasspath() throws IOException {
+        addPackageRules(resourceLines("/rules/packagerenames.txt"));
+        addTypeRules(resourceLines("/rules/typerenames.txt"));
+        addMemberRules(resourceLines("/rules/memberrenames.txt"));
+        addDescRules(resourceLines("/rules/memberdescrenames.txt"));
+        printRuleStats();
+    }
+
+    public static void translate(Path in, Path out) throws Exception {
+        Rewriter r = new Rewriter();
+        r.loadRulesFromClasspath();
+        r.run(in, out);
+    }
+
+    private void printRuleStats() {
+        System.out.printf("rules: %d package, %d type, %d member, %d desc%n",
+                packageRenames.size(), typeRenames.size(), memberRenames.size(), memberDescRenames.size());
+    }
+
+    private void addPackageRules(List<String> lines) throws IOException {
+        for (String line : lines) {
             int eq = line.indexOf('=');
             if (eq <= 0) throw new IOException("bad packagerename line: " + line);
             packageRenames.add(new String[]{line.substring(0, eq), line.substring(eq + 1)});
         }
-        for (String line : readLines(rulesDir.resolve("typerenames.txt"))) {
+    }
+
+    private void addTypeRules(List<String> lines) throws IOException {
+        for (String line : lines) {
             String[] parts = line.split("\t");
             if (parts.length != 2) throw new IOException("bad typerename line: " + line);
             typeRenames.put(parts[0].trim(), parts[1].trim());
         }
-        for (String line : readLines(rulesDir.resolve("memberrenames.txt"))) {
+    }
+
+    private void addMemberRules(List<String> lines) throws IOException {
+        for (String line : lines) {
             int eq = line.indexOf('=');
             if (eq <= 0) throw new IOException("bad memberrename line: " + line);
             String[] parts = line.substring(0, eq).split("\\|");
             if (parts.length != 3) throw new IOException("bad memberrename line: " + line);
             memberRenames.put(parts[0] + "|" + parts[1] + "|" + parts[2], line.substring(eq + 1).trim());
         }
-        for (String line : readLines(rulesDir.resolve("memberdescrenames.txt"))) {
+    }
+
+    private void addDescRules(List<String> lines) throws IOException {
+        for (String line : lines) {
             String[] parts = line.split("=", 2);
             if (parts.length != 2) throw new IOException("bad memberdescrename line: " + line);
             String[] key = parts[0].split("\\|");
             if (key.length != 3) throw new IOException("bad memberdescrename line: " + line);
             memberDescRenames.put(key[0] + "|" + key[1] + "|" + key[2], parts[1].trim());
         }
-        System.out.printf("rules: %d package, %d type, %d member, %d desc%n",
-                packageRenames.size(), typeRenames.size(), memberRenames.size(), memberDescRenames.size());
+    }
+
+    private static List<String> resourceLines(String path) throws IOException {
+        try (InputStream is = Rewriter.class.getResourceAsStream(path)) {
+            if (is == null) throw new IOException("missing rules resource " + path);
+            return new java.io.BufferedReader(new java.io.InputStreamReader(is, StandardCharsets.UTF_8))
+                    .lines().map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#")).toList();
+        }
     }
 
     private static List<String> readLines(Path p) throws IOException {

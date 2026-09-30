@@ -5,6 +5,13 @@ Hand-ruled rules translating a fixture mod (authentic 1.20.1 Forge API idioms) t
 NeoForge 1.21.1, gated by a live dedicated-server test matrix (smoke / negative /
 positive) driven entirely through RCON. 10/10.
 
+## Phase 0.5 — DONE (2026-09-29): Connector-style drop-in runtime
+`modbridge-agent.jar` (-javaagent, premain before FML discovery): drop 1.20.1 jars
+into `mods/source-1201/`, boot, they are translated (SHA-256-keyed cache in
+`modbridge-cache/`), installed into `mods/`, and loaded. Works as offline CLI too.
+16/16 matrix. Next: a NeoForge carrier mod for runtime shims (phase 3) so translated
+mods that need old-API facades get them from the classpath, not the jar.
+
 ## Phase 1 — real 1.20.1 validation environment
 Stand up a NeoForge 20.1 server (Java 17) in the same testbed layout and run the
 UNtranslated fixture there, closing the stubs-vs-real-1.20.1 authenticity gap.

@@ -5,10 +5,9 @@ Translates compiled mod jars between Minecraft mod-loader versions. First target
 [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 Every claim below is gated by a live-server test matrix (`scripts/run-matrix.sh`):
-a real headless NeoForge 21.1.250 dedicated server boots three times — with no mod
-(smoke), with the untranslated jar (must be skipped by the loader), and with the
-translated jar (must load, initialize, and answer `/fixtureping` through the RCON
-console). **10/10 checks pass.**
+a real headless NeoForge 21.1.250 dedicated server runs four phases — bare smoke,
+untranslated jar (must be skipped by the loader), the full **Connector-style drop-in
+flow**, and a warm reboot proving the translation cache. **16/16 checks pass.**
 
 ## How it works
 
@@ -35,13 +34,31 @@ NeoForge 1.21.1 dedicated server (isolated testbed, RCON on 127.0.0.1:25586)
 The rewriter never recompiles anything and never recomputes stack frames — every
 rewrite preserves the operand stack shape, so the original StackMapTable stays valid.
 
-## Quickstart
+## Connector-style usage (drop-in, like Sinytra)
+
+Add one JVM arg (e.g. to `user_jvm_args.txt` on a server):
+
+```
+-javaagent:/path/to/modbridge-agent.jar
+```
+
+Then drop any Forge/NeoForge **1.20.1** mod jar into `mods/source-1201/` and start.
+At boot — before the loader scans mods — the agent translates each jar, installs it
+into `mods/`, and logs everything under a `[ModBridge]` prefix. Unchanged mods are
+cached by SHA-256 in `modbridge-cache/` (warm reboots are free). Jars that already
+carry `neoforge.mods.toml` are copied verbatim; jars without mod metadata are skipped
+with a warning; a broken mod logs a failure and never blocks the server from starting.
+It also works as a plain offline CLI: `java -cp modbridge-agent.jar
+com.modbridge.agent.ModBridgeAgent <sourceDir> <modsDir>`.
+
+## Quickstart (from source)
 
 ```bash
 bash scripts/build-fixture.sh   # stubs + fixture -> out/fixture-1.20.1.jar
-bash scripts/translate.sh       # -> out/modbridgefixture-1.21.1-neoforge.jar
+bash scripts/build-agent.sh     # -> out/modbridge-agent.jar (rewriter + ASM + rules)
+bash scripts/translate.sh       # offline CLI: -> out/modbridgefixture-1.21.1-neoforge.jar
 bash scripts/setup-server.sh    # one-time: clone NeoForge 21.1.250 testbed (176 MB)
-bash scripts/run-matrix.sh      # smoke / negative / positive server phases
+bash scripts/run-matrix.sh      # smoke / negative / connector flow / warm reboot
 ```
 
 Drive the server console directly (full command access, no client needed):
