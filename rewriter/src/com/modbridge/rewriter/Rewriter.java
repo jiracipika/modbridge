@@ -77,6 +77,14 @@ public class Rewriter {
     final List<String[]> packageRenames = new ArrayList<>();
     final Map<String, String> memberRenames = new HashMap<>();
     final Map<String, String> memberDescRenames = new HashMap<>();
+    /** typerename keys ending in '$': match the type and all of its inner classes */
+    final Map<String, String> prefixTypeRenames = new LinkedHashMap<>();
+    /** SRG member id (m_123_/f_123_) -> mojmap name; 1.20.1 production mods reference
+     *  vanilla members by SRG name while NeoForge 21.1 runs mojmap. */
+    final Map<String, String> srgMemberRenames = new HashMap<>();
+    /** call-site retargets for members that became interface-default methods:
+     *  owner|desc|name -> newOwner|newDesc|interface-or-virtual */
+    final Map<String, String[]> memberRetargets = new HashMap<>();
 
     int fmlChainsSpliced;
     int resourceLocationCtors;
@@ -102,6 +110,8 @@ public class Rewriter {
         addTypeRules(readLines(rulesDir.resolve("typerenames.txt")));
         addMemberRules(readLines(rulesDir.resolve("memberrenames.txt")));
         addDescRules(readLines(rulesDir.resolve("memberdescrenames.txt")));
+        addSrgRules(readLines(rulesDir.resolve("srgmembers.txt")));
+        addRetargetRules(readLines(rulesDir.resolve("memberretargets.txt")));
         printRuleStats();
     }
 
@@ -111,6 +121,8 @@ public class Rewriter {
         addTypeRules(resourceLines("/rules/typerenames.txt"));
         addMemberRules(resourceLines("/rules/memberrenames.txt"));
         addDescRules(resourceLines("/rules/memberdescrenames.txt"));
+        addSrgRules(resourceLines("/rules/srgmembers.txt"));
+        addRetargetRules(resourceLines("/rules/memberretargets.txt"));
         printRuleStats();
     }
 
@@ -121,8 +133,30 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc%n",
-                packageRenames.size(), typeRenames.size(), memberRenames.size(), memberDescRenames.size());
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget%n",
+                packageRenames.size(), typeRenames.size(), memberRenames.size(),
+                memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size());
+    }
+
+    private void addRetargetRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#")) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad memberretarget line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 3 || val.length != 3) throw new IOException("bad memberretarget line: " + line);
+            memberRetargets.put(key[0] + "|" + key[1] + "|" + key[2],
+                    new String[]{val[0], val[1], val[2]});
+        }
+    }
+
+    private void addSrgRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            int eq = line.indexOf('=');
+            if (eq <= 0 || line.startsWith("#")) continue;
+            srgMemberRenames.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+        }
     }
 
     private void addPackageRules(List<String> lines) throws IOException {
@@ -137,7 +171,12 @@ public class Rewriter {
         for (String line : lines) {
             String[] parts = line.split("\t");
             if (parts.length != 2) throw new IOException("bad typerename line: " + line);
-            typeRenames.put(parts[0].trim(), parts[1].trim());
+            String from = parts[0].trim();
+            if (from.endsWith("$")) {
+                prefixTypeRenames.put(from, parts[1].trim());
+            } else {
+                typeRenames.put(from, parts[1].trim());
+            }
         }
     }
 
@@ -285,10 +324,8 @@ public class Rewriter {
                 changed = true;
             }
         }
-        if (!changed) {
-            throw new IllegalStateException(
-                    "mod class " + cn.name + " has no ()V constructor with an FMLJavaModLoadingContext chain");
-        }
+        // A plain no-arg constructor (game-bus-only mods) is also valid on NeoForge 1.21:
+        // only rewrite when the 1.20.1 mod-bus idiom is actually present.
     }
 
     /**
@@ -352,10 +389,21 @@ public class Rewriter {
         for (MethodNode mn : cn.methods) {
             for (AbstractInsnNode n : mn.instructions) {
                 if (n instanceof MethodInsnNode m) {
+                    m.name = mapSrg(m.name);
                     String renamed = memberRenames.get(m.owner + "|" + m.desc + "|" + m.name);
                     if (renamed != null) { m.name = renamed; memberRenamesApplied++; }
+                    String[] retarget = memberRetargets.get(m.owner + "|" + m.desc + "|" + m.name);
+                    if (retarget != null) {
+                        m.owner = retarget[0];
+                        m.desc = retarget[1];
+                        boolean itf = "interface".equals(retarget[2]);
+                        m.setOpcode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL);
+                        m.itf = itf;
+                        memberRenamesApplied++;
+                    }
                     applyDescRewrite(cn, mn, m);
                 } else if (n instanceof FieldInsnNode f) {
+                    f.name = mapSrg(f.name);
                     String renamed = memberRenames.get(f.owner + "|" + f.desc + "|" + f.name);
                     if (renamed != null) { f.name = renamed; memberRenamesApplied++; }
                 }
@@ -482,7 +530,13 @@ public class Rewriter {
 
     /** ASM Handle fields are private, so remapping produces a new Handle. */
     private Handle remapHandle(Handle h) {
-        return new Handle(h.getTag(), remapType(h.getOwner()), h.getName(), remapDesc(h.getDesc()), h.isInterface());
+        return new Handle(h.getTag(), remapType(h.getOwner()), mapSrg(h.getName()), remapDesc(h.getDesc()), h.isInterface());
+    }
+
+    /** SRG member ids are globally unique, so a bare name table is safe to apply anywhere */
+    String mapSrg(String name) {
+        String mapped = srgMemberRenames.get(name);
+        return mapped != null ? mapped : name;
     }
 
     private void remapParameterAnnotations(List<AnnotationNode>[] annotations) {
@@ -525,6 +579,11 @@ public class Rewriter {
         if (internal == null) return null;
         String mapped = typeRenames.get(internal);
         if (mapped != null) return mapped;
+        for (Map.Entry<String, String> e : prefixTypeRenames.entrySet()) {
+            if (internal.startsWith(e.getKey())) {
+                return e.getValue() + internal.substring(e.getKey().length());
+            }
+        }
         for (String[] pr : packageRenames) {
             if (internal.startsWith(pr[0])) {
                 return pr[1] + internal.substring(pr[0].length());

@@ -1,0 +1,6 @@
+# owner|oldDesc|name -> newOwner|newDesc|kind
+# setCanceled only exists as an interface default in NeoForge; invokevirtual cannot
+# resolve interface defaults, so the call site must become invokeinterface.
+net/minecraftforge/event/entity/living/LivingAttackEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface
+net/minecraftforge/event/entity/living/LivingHurtEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface
+net/minecraftforge/event/entity/living/LivingDamageEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface

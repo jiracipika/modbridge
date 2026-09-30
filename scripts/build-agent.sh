@@ -12,7 +12,7 @@ mkdir -p build/agent
 unzip -q -o tools/lib/asm-9.7.jar -x 'module-info.class' 'META-INF/versions/*' -d build/agent
 unzip -q -o tools/lib/asm-tree-9.7.jar -x 'module-info.class' 'META-INF/versions/*' -d build/agent
 mkdir -p build/agent/rules
-cp rules/packagerenames.txt rules/typerenames.txt rules/memberrenames.txt rules/memberdescrenames.txt build/agent/rules/
+cp rules/*.txt build/agent/rules/
 cat > build/agent/MANIFEST.MF <<MF
 Premain-Class: com.modbridge.agent.ModBridgeAgent
 Can-Redefine-Classes: false

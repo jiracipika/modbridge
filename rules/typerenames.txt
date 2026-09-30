@@ -4,3 +4,19 @@
 net/minecraftforge/registries/RegistryObject	net/neoforged/neoforge/registries/DeferredHolder
 # The game event bus moved class too: MinecraftForge -> NeoForge (field EVENT_BUS kept).
 net/minecraftforge/common/MinecraftForge	net/neoforged/neoforge/common/NeoForge
+
+# Config spec was renamed in the fork (API-compatible Builder surface).
+net/minecraftforge/common/ForgeConfigSpec	net/neoforged/neoforge/common/ModConfigSpec
+# '$' suffix: prefix rule covering all inner classes (Builder, ConfigValue, ...).
+net/minecraftforge/common/ForgeConfigSpec$	net/neoforged/neoforge/common/ModConfigSpec$
+# Registries helper renamed; IForgeRegistry was removed — vanilla Registry carries the
+# same extension surface (e.g. getKey) on NeoForge.
+net/minecraftforge/registries/ForgeRegistries	net/neoforged/neoforge/registries/NeoForgeRegistries
+net/minecraftforge/registries/IForgeRegistry	net/minecraft/core/Registry
+# 1.21 damage-event split: LivingHurtEvent -> LivingDamageEvent.Pre,
+# LivingDamageEvent -> LivingDamageEvent.Post (member rules in memberrenames.txt).
+net/minecraftforge/event/entity/living/LivingHurtEvent	net/neoforged/neoforge/event/entity/living/LivingDamageEvent$Pre
+net/minecraftforge/event/entity/living/LivingDamageEvent	net/neoforged/neoforge/event/entity/living/LivingDamageEvent$Post
+# 1.21 damage pipeline: LivingAttackEvent was replaced by LivingIncomingDamageEvent
+# (same getAmount, cancelable via ICancellableEvent — retarget rule below).
+net/minecraftforge/event/entity/living/LivingAttackEvent	net/neoforged/neoforge/event/entity/living/LivingIncomingDamageEvent

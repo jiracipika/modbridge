@@ -3,3 +3,13 @@
 # declared-on-class replacement (isPresent only exists as an interface default, which
 # invokevirtual resolution cannot reach).
 net/minecraftforge/registries/RegistryObject|()Z|isPresent=isBound
+# Damage-event split accessors (old-space owners).
+net/minecraftforge/event/entity/living/LivingHurtEvent|()F|getAmount=getNewDamage
+net/minecraftforge/event/entity/living/LivingHurtEvent|(F)V|setAmount=setNewDamage
+net/minecraftforge/event/entity/living/LivingDamageEvent|()F|getAmount=getNewDamage
+net/minecraftforge/event/entity/living/LivingDamageEvent|(F)V|setAmount=setNewDamage
+# RandomSource same-descriptor siblings (create/createThreadSafe/createNewThreadLocalInstance)
+# are ambiguous for descriptor pairing; these three are resolved manually.
+net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216327_=create
+net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216337_=createThreadSafe
+net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216343_=createNewThreadLocalInstance

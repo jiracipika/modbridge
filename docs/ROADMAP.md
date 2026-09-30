@@ -12,18 +12,23 @@ into `mods/source-1201/`, boot, they are translated (SHA-256-keyed cache in
 16/16 matrix. Next: a NeoForge carrier mod for runtime shims (phase 3) so translated
 mods that need old-API facades get them from the classpath, not the jar.
 
-## Phase 1 — real 1.20.1 validation environment
-Stand up a NeoForge 20.1 server (Java 17) in the same testbed layout and run the
-UNtranslated fixture there, closing the stubs-vs-real-1.20.1 authenticity gap.
-Same matrix scripts, second server dir.
+## Phase 1 — DONE (2026-09-29): real 1.20.1 validation environment + first real-mod trial
+`testenv/server-1201` = isolated Forge 1.20.1-47.4.8 server (Java 21 works) cloned from
+the Mayview v1 install; validated with real v1 mods, then the same real mods were
+translated onto the 21.1 testbed. See docs/REAL-MOD-TRIAL-001.md — nanny + deuf run on
+NeoForge 1.21.1 (zero residual SRG, live event handlers exercised via console); BeeFix
+correctly skipped as a coremod. Discovered and built the **SRG->mojmap layer**
+(47,007 exact pairs via tsrg2 x proguard join) — production 1.20.1 mods reference
+vanilla members by SRG name, which the fixture never exercised.
 
-## Phase 2 — automated rule generation (the big lever)
-Stop hand-writing tables:
-- diff two mojmap-mapped vanilla jars (javap both sides; emit renamed/removed/changed
-  members) across 1.20.1 → 1.21.1
-- diff the Forge 1.20.1 vs NeoForge 21.1 API jars for the forge-side surface
-- Linkie (linkie.weirdgloop.org) API as a cross-version name/mapping oracle
-- output: candidate rule tables + an "unresolvable" report (removed APIs needing shims)
+## Phase 2 — automated rule generation (the big lever) — SRG half DONE
+DONE: the SRG->mojmap table generator (tsrg2 x proguard exact join, 47,007 pairs;
+see docs/REAL-MOD-TRIAL-001.md). Remaining:
+- Linkie (linkie.weirdgloop.org) API to resolve the 12,345 SRG ids the exact join
+  misses (same-descriptor sibling overloads), and as a general cross-version oracle
+- diff Forge 1.20.1 vs NeoForge 21.1 universal jars -> generated forge-side rule tables
+  + an "unresolvable" report (removed APIs needing phase-3 shims)
+- diff mojmap vanilla 1.20.1 vs 1.21.1 for cross-version vanilla member drift
 
 ## Phase 3 — shim library
 For semantic (non-mechanical) changes, generate facade classes shipped inside the

@@ -85,6 +85,13 @@ public final class ModBridgeAgent {
         String hash = sha256(jar);
         Path cacheFile = cacheDir.resolve(name + "." + hash + ".jar");
 
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            if (zip.getEntry("coremods.json") != null || zip.getEntry("META-INF/coremods.json") != null) {
+                System.out.println(PREFIX + " " + name
+                        + " contains coremods (JS bytecode patches) — not supported yet, skipping");
+                return;
+            }
+        }
         String probe = probeJar(jar);
         if (probe.equals("neoforge")) {
             System.out.println(PREFIX + " " + name + " is already a NeoForge 1.21+ mod; copying verbatim");
