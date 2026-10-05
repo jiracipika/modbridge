@@ -21,11 +21,24 @@ correctly skipped as a coremod. Discovered and built the **SRG->mojmap layer**
 (47,007 exact pairs via tsrg2 x proguard join) — production 1.20.1 mods reference
 vanilla members by SRG name, which the fixture never exercised.
 
-## Phase 2 — automated rule generation (the big lever) — SRG half DONE
-DONE: the SRG->mojmap table generator (tsrg2 x proguard exact join, 47,007 pairs;
-see docs/REAL-MOD-TRIAL-001.md). Remaining:
-- Linkie (linkie.weirdgloop.org) API to resolve the 12,345 SRG ids the exact join
-  misses (same-descriptor sibling overloads), and as a general cross-version oracle
+## Phase 2 — automated rule generation (the big lever) — SRG layer DONE
+DONE: the SRG->mojmap table (47,007 exact pairs, tsrg2 x proguard join; see
+docs/REAL-MOD-TRIAL-001.md), and (2026-10-05) the sibling-overload gap closed in full:
+`SrgExactJoinResolver` (tools/src/com/modbridge/pairer/) resolves every id via the exact
+identity chain srgId -> obf member (MCPConfig joined.tsrg2) -> mojmap member (Mojang
+official client.txt+server.txt), disambiguated by descriptor from Forge's srg jar — the
+same data chain Linkie's "Mojang (via SRG)" namespace builds internally. Result: +1,056
+pairs (the "12,345" was occurrence count — overridden methods re-declare ids; the real
+gap was 1,056 distinct ids), 0 conflicts, all 47,007 Phase-1 pairs re-derived unchanged,
+table now 48,063 (`rules/srgmembers.txt`, additive-only diff). Usage-ranked first: 0 of
+the 3 trial mods referenced the gap; across the full 240-jar Mayview v1 pack 131 of the
+1,056 were referenced (top users: supplementaries 34, ImmersiveEngineering 31, hexerei
+25, Quark 24 distinct ids) — all 131 resolved. 251 of the additions were independently
+confirmed against the Linkie API (linkieapi.shedaniel.me, namespace mojang_srg@1.20.1):
+0 disagreements. Tests: scripts/test-srg-resolver.sh (pure fixture logic, 20 checks).
+Linkie remains listed as a cross-version oracle for the items below (its per-id search
+API works; there is no bulk endpoint — bulk resolution goes through the raw datasets).
+Remaining:
 - diff Forge 1.20.1 vs NeoForge 21.1 universal jars -> generated forge-side rule tables
   + an "unresolvable" report (removed APIs needing phase-3 shims)
 - diff mojmap vanilla 1.20.1 vs 1.21.1 for cross-version vanilla member drift

@@ -42,5 +42,10 @@
 - 12,345 SRG ids unresolved (same-desc sibling overloads in the tsrg/mappings join and
   server-side-only members) — resolvable via Linkie (roadmap phase 2). Mods hitting one
   get a precise NoSuchMethodError naming the id.
+  UPDATE 2026-10-05: resolved in full — the "12,345" was occurrence count (overridden
+  methods re-declare ids); the real gap was 1,056 distinct ids, now all resolved exactly
+  and merged additively (table 47,007 -> 48,063; see ROADMAP Phase 2 and
+  tools/src/com/modbridge/pairer/SrgExactJoinResolver.java). None of this trial's mods
+  referenced any of them.
 - Coremods (JS patches) unsupported — agent skips them explicitly.
 - Mixins untouched (phase 4): a mixin-bearing mod will fail at mixin refmap remap.
