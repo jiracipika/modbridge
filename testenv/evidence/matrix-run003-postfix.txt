@@ -1,0 +1,24 @@
+=== phase 1: smoke (no mods) ===
+  [PASS] server boots with zero mods
+  [PASS] clean server stop before next phase
+=== phase 2: negative (untranslated 1.20.1 jar must be rejected) ===
+  [PASS] loader flags untranslated jar (skip warning)
+  [PASS] fixture did not initialize (no constructor line)
+  [PASS] clean server stop before next phase
+=== phase 3: connector flow (drop 1.20.1 jar into source-1201, agent translates at boot) ===
+  [PASS] server boots with agent-translated mod
+  [PASS] agent detected and translated the source jar
+  [PASS] translated jar installed into mods/
+  [PASS] fixture constructor ran (original 1.20.1 bytecode path)
+  [PASS] command registration event fired
+  rcon> fixtureping
+  rcon< [modbridge-fixture] pong modbridgefixture:magic_item -> modbridgefixture:magic_item
+  [PASS] fixtureping returns registered item id
+  [PASS] clean server stop before next phase
+=== phase 4: warm reboot (cache must make re-translation free) ===
+  [PASS] server boots again with warm cache
+  [PASS] agent reused the hash cache (no re-translate)
+  [PASS] mod initialized on reboot
+  [PASS] clean final stop
+=== matrix: 16 passed, 0 failed ===
+MATRIX_RC=0

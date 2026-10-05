@@ -1,0 +1,34 @@
+# Extension trial: supplementaries-1.20-3.1.38 + moonlight-1.20-2.16.10 (2026-10-05, server-121)
+# manual pre-processing in scratch jars (documented): excised 2 capability mixins + stripped nested jars (META-INF/jars, META-INF/jarjar)
+
+== translation (CLI rewriter, agent jar rules) ==
+/tmp/mb-ext/translate-moon.log:rules: 6 package, 8 type, 8 member, 1 desc, 48063 srg, 3 retarget
+/tmp/mb-ext/translate-moon.log:translated 491 classes; fml chains spliced=1, ResourceLocation ctors rewritten=141, member renames=0
+/tmp/mb-ext/translate-supp.log:rules: 6 package, 8 type, 8 member, 1 desc, 48063 srg, 3 retarget
+/tmp/mb-ext/translate-supp.log:translated 1096 classes; fml chains spliced=1, ResourceLocation ctors rewritten=77, member renames=0
+
+== residual SRG scan (ids outside table = client-class owners, inert on dedicated server) ==
+supplementaries-neoforge.jar total=2752 (mixin-class refs=67, non-mixin refs=2685 in 261 classes)
+moonlight-neoforge.jar       total=439  (mixin-class refs=13, non-mixin refs=426 in 59 classes)
+verified: all non-mixin residual ids owned by classes ABSENT from 1.20.1 server srg jar (0 server-present owners)
+
+== boot attempt 1: module-layer collision (nested MixinExtras vs bundled mixinextras.neoforge) ==
+/Volumes/ADATA/projects/modbridge/testenv/console-server-121.log:[m[1;31m[15:43:55.949] [main/ERROR] [ModuleLayerHandler/]: Error while resolving modules. java.lang.module.ResolutionException: Modules MixinExtras and mixinextras.neoforge export package com.llamalad7.mixinextras.sugar.impl to module minecraft
+/Volumes/ADATA/projects/modbridge/testenv/server-121/logs/latest.log:[05Oct2026 15:43:55.949] [main/ERROR] [cpw.mods.modlauncher.ModuleLayerHandler/]: Error while resolving modules.
+
+== boot attempt 2: JarJar metadata.json references stripped nested jars ==
+[05Oct2026 15:45:02.877] [main/ERROR] [net.neoforged.fml.loading.moddiscovery.locators.JarInJarDependencyLocator/]: Failed to load mod file META-INF/jars/mixinextras-forge-0.3.6.jar from moonlight-neoforge.jar
+Caused by: java.io.IOException: Invalid paths argument, contained no existing paths: []
+
+== boot attempt 3: THE MIXIN WALL (refmap names SRG members against mojmap targets) ==
+	... 14 more
+Caused by: org.spongepowered.asm.mixin.injection.throwables.InjectionError: Critical injection failure: Callback method moonlight$makePOIMutable(Ljava/util/Collection;Lcom/llamalad7/mixinextras/injector/wrapoperation/Operation;)Ljava/util/Set; in moonlight-common.mixins.json:PoiMixin from mod (unknown) failed injection check, (0/1) succeeded. Scanned 0 target(s). Using refmap moonlight-common-refmap.json
+
+== boot attempt 3: additional context ==
+FML discovery listed both containers:
+		Moonlight Library 1.20-2.16.10 (moonlight)
+		Supplementaries 1.20-3.1.38 (supplementaries)
+Mixin configs began loading; cross-version target drift WARNs (phase-4/5 data):
+@Mixin target net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior was not found supplementaries-common.mixins.json:AbstractProjectileBehaviorAccessor
+@Mixin target net.minecraft.world.level.storage.loot.functions.ExplorationMapFunction$Serializer was not found supplementaries-common.mixins.json:ExplorationMapSerializerMixin
+Boot aborted on first strict injection failure (before any mod constructed).

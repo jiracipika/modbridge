@@ -1,0 +1,35 @@
+# Phase-1 trial set re-run on new table: nanny-1.0.6 + deuf-1.20.1-1.3 (+fixture), server-121
+
+== boot/translation (console-server-121.log) ==
+[ModBridge] translating 3 jar(s) from /Volumes/ADATA/projects/modbridge/testenv/server-121/mods/source-1201 (NeoForge 1.21.1 target)
+[ModBridge] deuf-1.20.1-1.3.jar unchanged (sha CC208A8E), using cache
+[ModBridge] installed -> mods/deuf-1.20.1-1.3.jar
+[ModBridge] fixture-1.20.1.jar unchanged (sha 99756C67), using cache
+[ModBridge] installed -> mods/fixture-1.20.1.jar
+[ModBridge] nanny-1.0.6.jar unchanged (sha 77226828), using cache
+[ModBridge] installed -> mods/nanny-1.0.6.jar
+		ModBridge Fixture 1.0.0 (modbridgefixture)
+[15:23:04] [Server thread/INFO] [minecraft/DedicatedServer]: Done (1.261s)! For help, type "help"
+
+== discovery/init (logs/latest.log, first boot) ==
+[05Oct2026 15:22:38.989] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Found mod file "server-1.21.1-20240808.144430-srg.jar" [locator: production server provider +net.neoforged:neoforge:21.1.250:server]
+[05Oct2026 15:22:39.037] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Found mod file "neoforge-21.1.250-universal.jar" [locator: PathBasedLocator[name=neoforge, paths=[libraries/net/neoforged/neoforge/21.1.250/neoforge-21.1.250-universal.jar]], reader: mod manifest]
+[05Oct2026 15:22:39.058] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Found mod file "deuf-1.20.1-1.3.jar" [locator: {mods folder locator at /Volumes/ADATA/projects/modbridge/testenv/server-121/mods}, reader: mod manifest]
+[05Oct2026 15:22:39.064] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Found mod file "fixture-1.20.1.jar" [locator: {mods folder locator at /Volumes/ADATA/projects/modbridge/testenv/server-121/mods}, reader: mod manifest]
+[05Oct2026 15:22:39.074] [main/INFO] [net.neoforged.fml.loading.moddiscovery.ModDiscoverer/SCAN]: Found mod file "nanny-1.0.6.jar" [locator: {mods folder locator at /Volumes/ADATA/projects/modbridge/testenv/server-121/mods}, reader: mod manifest]
+		DEUF - Duplicate Entity UUID Fix 1.20.1-1.3 (deuf)
+		NaNny 1.0.1 (nanny)
+[05Oct2026 15:22:56.116] [modloading-worker-0/INFO] [modbridgefixture/]: [modbridge-fixture] constructed via 1.20.1 API
+
+== RCON transcript: duplicate-UUID attempt (vanilla guard blocks pre-join) ==
+rcon> summon pig {UUID:[I;286331153,572666675,1145328981,1431655765]} x2
+rcon< Summoned new Pig
+rcon< Unable to summon entity due to duplicate UUIDs
+rcon< execute if entity @e[type=pig,limit=1] -> Test passed, count: 1
+
+== RCON transcript: fresh summon + kill (nanny damage/death dispatch) ==
+rcon> summon minecraft:pig 0 -58 0 {Health:10f}
+rcon< Summoned new Pig
+rcon> kill @e[type=pig]
+rcon< Killed Pig
+rcon> errors in latest.log: 0

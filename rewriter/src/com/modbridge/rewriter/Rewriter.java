@@ -356,14 +356,22 @@ public class Rewriter {
                             && ctor.getOpcode() == Opcodes.INVOKESPECIAL
                             && "<init>".equals(ctor.name)
                             && RESOURCE_LOCATION.equals(ctor.owner)) {
-                        if (!"(Ljava/lang/String;Ljava/lang/String;)V".equals(ctor.desc)) {
+                        MethodInsnNode factory;
+                        if ("(Ljava/lang/String;Ljava/lang/String;)V".equals(ctor.desc)) {
+                            factory = new MethodInsnNode(
+                                    Opcodes.INVOKESTATIC, RESOURCE_LOCATION, "fromNamespaceAndPath",
+                                    "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/resources/ResourceLocation;",
+                                    false);
+                        } else if ("(Ljava/lang/String;)V".equals(ctor.desc)) {
+                            // single-arg ctor (ns:path or path) -> ResourceLocation.parse
+                            factory = new MethodInsnNode(
+                                    Opcodes.INVOKESTATIC, RESOURCE_LOCATION, "parse",
+                                    "(Ljava/lang/String;)Lnet/minecraft/resources/ResourceLocation;",
+                                    false);
+                        } else {
                             throw new IllegalStateException(
                                     "unsupported ResourceLocation ctor descriptor " + ctor.desc + " in " + cn.name);
                         }
-                        MethodInsnNode factory = new MethodInsnNode(
-                                Opcodes.INVOKESTATIC, RESOURCE_LOCATION, "fromNamespaceAndPath",
-                                "(Ljava/lang/String;Ljava/lang/String;)Lnet/minecraft/resources/ResourceLocation;",
-                                false);
                         after = ctor.getNext();
                         mn.instructions.insert(ctor, factory);
                         mn.instructions.remove(n);
@@ -381,6 +389,21 @@ public class Rewriter {
     }
 
     void applyMemberRenames(ClassNode cn) {
+        // SRG declarations: production 1.20.1 mods override vanilla members by SRG id
+        // (m_5744_, f_91074_ ...) because the jar ships in SRG member space. Call sites
+        // are mapped below; the declarations themselves must be renamed too, or the
+        // override silently stops overriding once the target runs mojmap (ids are
+        // globally unique, so a bare-name lookup is exactly as safe as for call sites).
+        if (!srgMemberRenames.isEmpty()) {
+            for (MethodNode mn : cn.methods) {
+                String mapped = srgMemberRenames.get(mn.name);
+                if (mapped != null) mn.name = mapped;
+            }
+            for (FieldNode f : cn.fields) {
+                String mapped = srgMemberRenames.get(f.name);
+                if (mapped != null) f.name = mapped;
+            }
+        }
         if (memberRenames.isEmpty()) return;
         for (MethodNode mn : cn.methods) {
             String renamed = memberRenames.get(cn.name + "|" + mn.desc + "|" + mn.name);
@@ -464,6 +487,17 @@ public class Rewriter {
                 if (f.signature != null) f.signature = remapDesc(f.signature);
                 remapAnnotations(f.visibleAnnotations);
                 remapAnnotations(f.invisibleAnnotations);
+            }
+        }
+        // record component descs live in the Record attribute (not FieldNodes); ASM models
+        // them via recordComponents — leaving them stale keeps forge-space types visible to
+        // reflection even though the backing field was remapped.
+        if (cn.recordComponents != null) {
+            for (org.objectweb.asm.tree.RecordComponentNode rc : cn.recordComponents) {
+                rc.descriptor = remapDesc(rc.descriptor);
+                if (rc.signature != null) rc.signature = remapDesc(rc.signature);
+                remapAnnotations(rc.visibleAnnotations);
+                remapAnnotations(rc.invisibleAnnotations);
             }
         }
         if (cn.methods != null) {
@@ -564,6 +598,11 @@ public class Rewriter {
     private Object remapAnnotationValue(Object v) {
         if (v instanceof Type ty) {
             return Type.getType(remapDesc(ty.getDescriptor()));
+        }
+        if (v instanceof String[] enumRef && enumRef.length == 2 && enumRef[0].startsWith("L")) {
+            // ASM tree represents an enum-constant annotation value as {typeDesc, name};
+            // without this, e.g. @OnlyIn(Dist.CLIENT) keeps the forge-side Dist desc.
+            return new String[]{remapDesc(enumRef[0]), enumRef[1]};
         }
         if (v instanceof AnnotationNode nested) {
             remapAnnotation(nested);

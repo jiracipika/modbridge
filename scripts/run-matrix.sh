@@ -45,7 +45,7 @@ mkdir -p "$S/mods/source-1201"
 cp "$MB/out/fixture-1.20.1.jar" "$S/mods/source-1201/"
 bash "$T/run-server.sh" start > /tmp/matrix-pos.log 2>&1
 grep -q SERVER_UP /tmp/matrix-pos.log; check "server boots with agent-translated mod" $?
-grep -q 'translating 1 jar' "$T/console-out.log"; check "agent detected and translated the source jar" $?
+grep -q 'translating 1 jar' "$T/console-server-121.log"; check "agent detected and translated the source jar" $?
 test -f "$S/mods/fixture-1.20.1.jar"; check "translated jar installed into mods/" $?
 grep -q 'constructed via 1.20.1 API' "$S/logs/latest.log"
 check "fixture constructor ran (original 1.20.1 bytecode path)" $?
@@ -63,7 +63,7 @@ for i in $(seq 1 15); do lsof -ti :25585 >/dev/null 2>&1 || break; sleep 2; done
 echo "=== phase 4: warm reboot (cache must make re-translation free) ==="
 bash "$T/run-server.sh" start > /tmp/matrix-warm.log 2>&1
 grep -q SERVER_UP /tmp/matrix-warm.log; check "server boots again with warm cache" $?
-grep -q 'unchanged (sha' "$T/console-out.log"; check "agent reused the hash cache (no re-translate)" $?
+grep -q 'unchanged (sha' "$T/console-server-121.log"; check "agent reused the hash cache (no re-translate)" $?
 grep -q 'constructed via 1.20.1 API' "$S/logs/latest.log"
 check "mod initialized on reboot" $?
 bash "$T/run-server.sh" stop > /tmp/matrix-stop.log 2>&1
