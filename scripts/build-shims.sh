@@ -20,9 +20,12 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 "$JDK/bin/javac" --release 17 -cp "$SRV:$NJAR:$BUS:$LOADER" -d "$OUT" $(find "$MB/shims/src" -name '*.java')
 
+# list EVERY class file, including anonymous inner classes (ForgeCapabilities$1/$2):
+# the rewriter injects and relocates exactly this list, so a holder without its
+# nested token classes would NoClassDefFoundError at clinit.
 {
   cd "$OUT"
-  find . -name '*.class' | sed 's|^\./||; s|\.class$||' | grep -v '\$' | sort
+  find . -name '*.class' | sed 's|^\./||; s|\.class$||' | sort
 } > "$OUT/shims.txt"
 
 echo "shims built:"

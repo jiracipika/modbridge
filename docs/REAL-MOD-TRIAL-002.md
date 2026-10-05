@@ -334,8 +334,9 @@ verify present in both output jars with 0 residual forge refs (forge-ref gate).
 ## Gates
 
 - matrix: **16/16** — run005 (10/16) caught the JPMS split-package failure
-  (testenv/evidence/matrix-run005-phase5-jpms-discovery.txt); run007 after the final
-  rules is binding: 16 passed, 0 failed (testenv/evidence/matrix-run007-phase5.txt).
+  (testenv/evidence/matrix-run005-phase5-jpms-discovery.txt); run007 (final rules) and
+  run008 (after the inner-class manifest fix) both 16 passed, 0 failed
+  (matrix-run007-phase5.txt / matrix-run008-phase5-final.txt — run008 is binding).
 - unit: `scripts/test-shims.sh` (NEW, 63 checks: shim runtime semantics, per-member
   descriptor exactness against the measured call sites, rules + injection),
   `scripts/test-refmap-remapper.sh` 3/3, `scripts/test-srg-resolver.sh` 4/4.

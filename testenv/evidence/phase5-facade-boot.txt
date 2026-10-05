@@ -40,3 +40,6 @@
 supp-final.jar: forge-refs=0, per-mod shims=12 (com/modbridge/shim/supplementaries/), ItemAbility refs=4
 ml-final.jar:   forge-refs=0, per-mod shims=12 (com/modbridge/shim/moonlight/), forge SpawnEgg ref -> DeferredSpawnEggItem
 agent jar:      rules/shims/ bundled (out/modbridge-agent.jar)
+
+## post-review fix: shim manifest now lists anonymous inner classes (ForgeCapabilities$1/$2)
+re-verified: supp-final2.jar -> 14 shims injected (2 inner tokens), forge-refs=0; matrix re-run green
