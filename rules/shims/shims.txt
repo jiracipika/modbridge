@@ -1,0 +1,12 @@
+com/modbridge/shim/ObfuscationReflectionHelper
+net/neoforged/fml/config/ConfigFileTypeHandler
+net/neoforged/neoforge/common/capabilities/Capability
+net/neoforged/neoforge/common/capabilities/CapabilityManager
+net/neoforged/neoforge/common/capabilities/CapabilityToken
+net/neoforged/neoforge/common/capabilities/ForgeCapabilities
+net/neoforged/neoforge/common/capabilities/ICapabilityProvider
+net/neoforged/neoforge/common/util/LazyOptional
+net/neoforged/neoforge/common/util/NonNullConsumer
+net/neoforged/neoforge/common/util/NonNullSupplier
+net/neoforged/neoforge/event/AttachCapabilitiesEvent
+net/neoforged/neoforge/event/RegisterCapabilitiesEvent

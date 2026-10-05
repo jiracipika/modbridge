@@ -13,6 +13,10 @@ unzip -q -o tools/lib/asm-9.7.jar -x 'module-info.class' 'META-INF/versions/*' -
 unzip -q -o tools/lib/asm-tree-9.7.jar -x 'module-info.class' 'META-INF/versions/*' -d build/agent
 mkdir -p build/agent/rules
 cp rules/*.txt build/agent/rules/
+# phase-5 shim carrier classes + manifest (built by scripts/build-shims.sh)
+if [ -d rules/shims ]; then
+  cp -r rules/shims build/agent/rules/shims
+fi
 cat > build/agent/MANIFEST.MF <<MF
 Premain-Class: com.modbridge.agent.ModBridgeAgent
 Can-Redefine-Classes: false

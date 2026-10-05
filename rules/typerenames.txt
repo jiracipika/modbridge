@@ -24,3 +24,36 @@ net/minecraftforge/event/entity/living/LivingAttackEvent	net/neoforged/neoforge/
 # (IConditionSerializer died in the codec rework — refs to it are left unmapped).
 net/minecraftforge/common/crafting/conditions/ICondition	net/neoforged/neoforge/common/conditions/ICondition
 net/minecraftforge/common/crafting/conditions/ICondition$	net/neoforged/neoforge/common/conditions/ICondition$
+# 1.21 renamed the tool-action surface: ToolAction/ToolActions -> ItemAbility/ItemAbilities
+# (javap-verified identical members: actions map, get(String)=computeIfAbsent create-or-get,
+#  name(); ItemAbilities keeps the constant names: AXE_STRIP, HOE_TILL, AXE_SCRAPE, ...).
+net/minecraftforge/common/ToolAction	net/neoforged/neoforge/common/ItemAbility
+net/minecraftforge/common/ToolActions	net/neoforged/neoforge/common/ItemAbilities
+# phase-5 shim facade: removed-API names resolve to the shim carrier, injected per-jar
+# under com/modbridge/shim/<modid>/ ('@SHIM@' placeholder). The package is per-mod ON
+# PURPOSE: FML exports every package of a mod module and JPMS kills module resolution
+# when two layer modules export the same package (matrix-run005 caught the first draft
+# parked at platform names). Shims: capability token chain + LazyOptional (forge
+# per-instance capability API is gone in 21.1), the inert AttachCapabilitiesEvent, the
+# removed ConfigFileTypeHandler, and a fail-soft ObfuscationReflectionHelper.
+net/minecraftforge/common/util/LazyOptional	@SHIM@/LazyOptional
+net/minecraftforge/common/capabilities/Capability	@SHIM@/Capability
+net/minecraftforge/common/capabilities/CapabilityToken	@SHIM@/CapabilityToken
+net/minecraftforge/common/capabilities/CapabilityManager	@SHIM@/CapabilityManager
+net/minecraftforge/common/capabilities/ICapabilityProvider	@SHIM@/ICapabilityProvider
+net/minecraftforge/common/capabilities/ForgeCapabilities	@SHIM@/ForgeCapabilities
+net/minecraftforge/common/util/NonNullSupplier	@SHIM@/NonNullSupplier
+net/minecraftforge/common/util/NonNullConsumer	@SHIM@/NonNullConsumer
+net/minecraftforge/event/AttachCapabilitiesEvent	@SHIM@/AttachCapabilitiesEvent
+net/minecraftforge/fml/config/ConfigFileTypeHandler	@SHIM@/ConfigFileTypeHandler
+net/minecraftforge/fml/util/ObfuscationReflectionHelper	@SHIM@/ObfuscationReflectionHelper
+# ForgeRegistries was renamed NeoForgeRegistries INCLUDING its inner-class keys holder
+# (bare-name rule above misses the $-form; same pattern as ForgeConfigSpec$).
+net/minecraftforge/registries/ForgeRegistries$	net/neoforged/neoforge/registries/NeoForgeRegistries$
+# supplementaries references the event at this (nonstandard) path; parked at @SHIM@
+# (never fires) because the real 21.1 event has a different shape and fires during
+# construction — see the shim's javadoc.
+net/minecraftforge/common/capabilities/RegisterCapabilitiesEvent	@SHIM@/RegisterCapabilitiesEvent
+net/minecraftforge/event/RegisterCapabilitiesEvent	@SHIM@/RegisterCapabilitiesEvent
+# 1.21 renamed the deferred spawn egg item; ctor shape identical (Supplier,int,int,Properties).
+net/minecraftforge/common/ForgeSpawnEggItem	net/neoforged/neoforge/common/DeferredSpawnEggItem

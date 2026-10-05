@@ -119,11 +119,27 @@ public class Rewriter {
     /** 1.21.1 platform class universe (internal names): minecraft server + neoforge
      *  libraries. Optional — when absent, only leftover forge refs count as drift. */
     final Set<String> classlist = new HashSet<>();
+    /** phase-5 shim carrier classes (original internal name -> bytecode): removed-API
+     *  classes (LazyOptional, Capability token chain, NonNull* functional types, the
+     *  inert AttachCapabilitiesEvent + ConfigFileTypeHandler, the fail-soft
+     *  ObfuscationReflectionHelper) injected into every translated jar so the
+     *  retargeted references resolve inside the mod's own module. Built by
+     *  scripts/build-shims.sh. Rules reference them as "@SHIM@/<SimpleName>". */
+    final Map<String, byte[]> shims = new LinkedHashMap<>();
+    /** per-jar shim package: com/modbridge/shim/<modid>/ — MUST be unique per module:
+     *  FML exports every package of a mod module, and JPMS kills module resolution
+     *  when two modules in the layer export the same package (matrix-run005 caught
+     *  the first draft parked at platform package names). */
+    String shimRoot = null;
+    /** shim simple names (last path segment) -> original internal name (unique) */
+    final Map<String, String> shimSimpleNames = new HashMap<>();
 
     // phase-4 accounting (mixin refmap remap + drift neutralization)
     int mixinClassesSeen;
     int refmapsRemapped;
     int nestedJarsDropped;
+    // phase-5 accounting (shim carrier injection)
+    int shimsInjected;
     int atLinesRemapped;
     int atLinesUnmapped;
     /** slash-internal names of mixin classes removed from the translation */
@@ -160,6 +176,7 @@ public class Rewriter {
         addClasslist(readLines(rulesDir.resolve("classlist-1211.txt")));
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
+        loadShimsFromDir(rulesDir.resolve("shims"));
         printRuleStats();
     }
 
@@ -174,6 +191,7 @@ public class Rewriter {
         addClasslist(resourceLinesOptional("/rules/classlist-1211.txt"));
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
+        loadShimsFromClasspath("/rules/shims");
         printRuleStats();
     }
 
@@ -184,10 +202,188 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d classlist, %d mojrenames, %d member-targets classes%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d classlist, %d mojrenames, %d member-targets classes, %d shims%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
-                classlist.size(), mojMemberRenames.size(), memberTargets.size());
+                classlist.size(), mojMemberRenames.size(), memberTargets.size(), shims.size());
+    }
+
+    /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
+    private void loadShimsFromDir(Path dir) throws IOException {
+        Path manifest = dir.resolve("shims.txt");
+        if (!Files.exists(manifest)) return;
+        for (String line : readLines(manifest)) {
+            Path classFile = dir.resolve(line + ".class");
+            if (!Files.exists(classFile)) {
+                throw new IOException("shim manifest lists " + line + " but " + classFile + " is missing");
+            }
+            shims.put(line, Files.readAllBytes(classFile));
+        }
+        indexShimSimpleNames();
+    }
+
+    /** loads the shim manifest + bytecode from agent-jar resources (drop-in mode) */
+    private void loadShimsFromClasspath(String resourceDir) throws IOException {
+        List<String> lines;
+        try {
+            lines = resourceLines(resourceDir + "/shims.txt");
+        } catch (IOException e) {
+            return; // no shims bundled (legacy agent jar)
+        }
+        for (String line : lines) {
+            byte[] bytes;
+            try (InputStream is = Rewriter.class.getResourceAsStream(resourceDir + "/" + line + ".class")) {
+                if (is == null) throw new IOException("shim manifest lists " + line + " but the class resource is missing");
+                bytes = readAll(is);
+            }
+            shims.put(line, bytes);
+        }
+        indexShimSimpleNames();
+    }
+
+    private void indexShimSimpleNames() {
+        for (String name : shims.keySet()) {
+            String simple = name.substring(name.lastIndexOf('/') + 1);
+            shimSimpleNames.put(simple, name);
+        }
+    }
+
+    /** pins the per-module shim package; called from run() once the mod id is known */
+    void initShimRoot(String modId) {
+        String id = (modId == null || modId.isBlank()) ? "unknown" : modId.replaceAll("[^A-Za-z0-9_$]", "_");
+        shimRoot = "com/modbridge/shim/" + id;
+    }
+
+    /** resolves the "@SHIM@/<SimpleName>" placeholder used in typerenames targets */
+    String resolveShimTarget(String mapped) {
+        if (mapped != null && mapped.startsWith("@SHIM@/")) {
+            String simple = mapped.substring("@SHIM@/".length());
+            if (!shimSimpleNames.containsKey(simple)) {
+                throw new IllegalStateException("@SHIM@ target " + simple + " is not in the shim manifest");
+            }
+            String root = shimRoot != null ? shimRoot : "com/modbridge/shim/unknown";
+            return root + "/" + simple;
+        }
+        return mapped;
+    }
+
+    /** phase-5: inject the shim carrier classes into the translated jar, RELOCATED to
+     *  the per-module shim package (com/modbridge/shim/<modid>/...). FML exports every
+     *  package of a mod module and JPMS forbids split packages across layer modules —
+     *  platform-name parking fails module resolution (matrix-run005). Unreferenced
+     *  shims are inert bytecode; classes the jar already defines are never overridden. */
+    void injectShims(Map<String, byte[]> entries) {
+        if (shims.isEmpty() || shimRoot == null) return;
+        for (Map.Entry<String, byte[]> e : shims.entrySet()) {
+            String original = e.getKey();
+            String simple = original.substring(original.lastIndexOf('/') + 1);
+            String relocatedName = shimRoot + "/" + simple;
+            String entryName = relocatedName + ".class";
+            if (entries.putIfAbsent(entryName, relocateShimClass(e.getValue(), relocatedName)) == null) {
+                shimsInjected++;
+            }
+        }
+        if (shimsInjected > 0) {
+            System.out.println("phase-5 shims injected into " + shimRoot + ": " + shimsInjected);
+        }
+    }
+
+    /** rewrites a shim class's bytecode from its original internal name to
+     *  <shimRoot>/<SimpleName> — same-shape rename via the ASM tree API (no
+     *  asm-commons in tools/lib): class/super/interfaces/inner/nest headers, member
+     *  descriptors + signatures, instruction owners/types, handles, frames, locals. */
+    private byte[] relocateShimClass(byte[] bytes, String target) {
+        ClassNode cn = new ClassNode();
+        new ClassReader(bytes).accept(cn, 0);
+        String original = cn.name;
+        Map<String, String> names = new HashMap<>();
+        for (String other : shims.keySet()) {
+            String otherSimple = other.substring(other.lastIndexOf('/') + 1);
+            names.put(other, shimRoot + "/" + otherSimple);
+        }
+        cn.name = target;
+        cn.superName = names.getOrDefault(cn.superName, cn.superName);
+        cn.interfaces.replaceAll(i -> names.getOrDefault(i, i));
+        if (cn.nestHostClass != null) cn.nestHostClass = names.getOrDefault(cn.nestHostClass, cn.nestHostClass);
+        if (cn.nestMembers != null) cn.nestMembers.replaceAll(i -> names.getOrDefault(i, i));
+        if (cn.permittedSubclasses != null) cn.permittedSubclasses.replaceAll(i -> names.getOrDefault(i, i));
+        if (cn.innerClasses != null) {
+            for (InnerClassNode icn : cn.innerClasses) {
+                icn.name = names.getOrDefault(icn.name, icn.name);
+                if (icn.outerName != null) icn.outerName = relocateSimpleAware(icn.outerName, names);
+                if (icn.innerName != null) icn.innerName = relocateSimpleAware(icn.innerName, names);
+            }
+        }
+        if (cn.signature != null) cn.signature = relocateDescText(cn.signature, names);
+        for (FieldNode f : cn.fields) {
+            f.desc = relocateDescText(f.desc, names);
+            if (f.signature != null) f.signature = relocateDescText(f.signature, names);
+        }
+        for (MethodNode m : cn.methods) {
+            m.desc = relocateDescText(m.desc, names);
+            if (m.signature != null) m.signature = relocateDescText(m.signature, names);
+            if (m.exceptions != null) m.exceptions.replaceAll(x -> names.getOrDefault(x, x));
+            if (m.tryCatchBlocks != null) {
+                for (TryCatchBlockNode t : m.tryCatchBlocks) {
+                    if (t.type != null) t.type = names.getOrDefault(t.type, t.type);
+                }
+            }
+            for (AbstractInsnNode n : m.instructions) {
+                if (n instanceof TypeInsnNode ti) {
+                    ti.desc = names.getOrDefault(ti.desc, ti.desc);
+                } else if (n instanceof MethodInsnNode mi) {
+                    mi.owner = names.getOrDefault(mi.owner, mi.owner);
+                    mi.desc = relocateDescText(mi.desc, names);
+                } else if (n instanceof FieldInsnNode fi) {
+                    fi.owner = names.getOrDefault(fi.owner, fi.owner);
+                    fi.desc = relocateDescText(fi.desc, names);
+                } else if (n instanceof InvokeDynamicInsnNode id) {
+                    id.desc = relocateDescText(id.desc, names);
+                    if (id.bsm != null) {
+                        id.bsm = new Handle(id.bsm.getTag(),
+                                names.getOrDefault(id.bsm.getOwner(), id.bsm.getOwner()),
+                                id.bsm.getName(), relocateDescText(id.bsm.getDesc(), names),
+                                id.bsm.isInterface());
+                    }
+                    if (id.bsmArgs != null) {
+                        for (int i = 0; i < id.bsmArgs.length; i++) {
+                            if (id.bsmArgs[i] instanceof Type ty) {
+                                id.bsmArgs[i] = Type.getType(relocateDescText(ty.getDescriptor(), names));
+                            }
+                        }
+                    }
+                } else if (n instanceof FrameNode fr) {
+                    if (fr.local != null) fr.local.replaceAll(o -> o instanceof String s ? names.getOrDefault(s, s) : o);
+                    if (fr.stack != null) fr.stack.replaceAll(o -> o instanceof String s ? names.getOrDefault(s, s) : o);
+                }
+            }
+            if (m.localVariables != null) {
+                for (LocalVariableNode lv : m.localVariables) {
+                    lv.desc = relocateDescText(lv.desc, names);
+                    if (lv.signature != null) lv.signature = relocateDescText(lv.signature, names);
+                }
+            }
+        }
+        // sanity: the relocated class must now self-describe under the new name
+        if (!cn.name.equals(target)) throw new IllegalStateException("shim relocation failed for " + original);
+        return toBytes(cn);
+    }
+
+    /** replaces internal-name occurrences inside descriptor/signature text (whole-name) */
+    private static String relocateDescText(String text, Map<String, String> names) {
+        if (text == null) return null;
+        String out = text;
+        for (Map.Entry<String, String> e : names.entrySet()) {
+            out = out.replace("L" + e.getKey() + ";", "L" + e.getValue() + ";");
+        }
+        return out;
+    }
+
+    /** binary-name (dots) form used by InnerClassNode outer/inner names */
+    private static String relocateSimpleAware(String dotted, Map<String, String> names) {
+        String slashed = dotted.replace('.', '/');
+        String replaced = names.get(slashed);
+        return replaced != null ? replaced.replace('/', '.') : dotted;
     }
 
     private void addClasslist(List<String> lines) {
@@ -325,6 +521,10 @@ public class Rewriter {
 
         // phase-4: parse mixin configs up front so drift-checking can tell which mixin
         // classes actually load on a dedicated server (common/"mixins"+"server" arrays vs "client")
+        initShimRoot(modsToml == null ? null : extract(modsToml, "modId"));
+
+        // phase-4: parse mixin configs up front so drift-checking can tell which mixin
+        // classes actually load on a dedicated server (common/"mixins"+"server" arrays vs "client")
         Map<String, Object> mixinConfigs = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> e : entries.entrySet()) {
             if (!e.getKey().endsWith(".json")) continue;
@@ -370,6 +570,8 @@ public class Rewriter {
         entries.put("META-INF/neoforge.mods.toml",
                 generateModsToml(modsToml).getBytes(StandardCharsets.UTF_8));
         entries.put("pack.mcmeta", generatePackMeta(packMeta).getBytes(StandardCharsets.UTF_8));
+
+        injectShims(entries);
 
         if (out.getParent() != null) {
             Files.createDirectories(out.getParent());
@@ -776,7 +978,10 @@ public class Rewriter {
     }
 
     /** classlist empty (no inventory shipped) -> only leftover forge refs count as drift */
-    private boolean classKnown(String internal) {
+    boolean classKnown(String internal) {
+        if (shimRoot != null && internal.startsWith(shimRoot + "/")) {
+            return shimSimpleNames.containsKey(internal.substring(shimRoot.length() + 1)); // injected into this very jar
+        }
         if (classlist.isEmpty()) return !internal.startsWith("net/minecraftforge/");
         return classlist.contains(internal);
     }
@@ -1312,8 +1517,19 @@ public class Rewriter {
 
     String remapType(String internal) {
         if (internal == null) return null;
+        // StackMapTable frame entries carry ARRAY descriptors for array locals
+        // ("[Lnet/...;") — strip the dims, remap the element class, re-attach.
+        int dims = 0;
+        while (dims < internal.length() && internal.charAt(dims) == '[') dims++;
+        if (dims > 0) {
+            String elem = internal.substring(dims);
+            String remapped = elem.startsWith("L")
+                    ? "L" + remapType(elem.substring(1, elem.length() - 1)) + ";"
+                    : elem;
+            return "[".repeat(dims) + remapped;
+        }
         String mapped = typeRenames.get(internal);
-        if (mapped != null) return mapped;
+        if (mapped != null) return resolveShimTarget(mapped);
         for (Map.Entry<String, String> e : prefixTypeRenames.entrySet()) {
             if (internal.startsWith(e.getKey())) {
                 return e.getValue() + internal.substring(e.getKey().length());

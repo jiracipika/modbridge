@@ -83,7 +83,10 @@ public final class ModBridgeAgent {
     private static void handle(Path jar, Path modsDir, Path cacheDir) throws Exception {
         String name = jar.getFileName().toString();
         String hash = sha256(jar);
-        Path cacheFile = cacheDir.resolve(name + "." + hash + ".jar");
+        // cache key includes the agent jar's own hash: the agent bundles the rules AND
+        // the shim carrier classes, so a rebuilt agent must never serve stale
+        // translations (phase-5 lesson: rules changes used to be invisible to the cache)
+        Path cacheFile = cacheDir.resolve(name + "." + hash + "." + fingerprint().substring(0, 8) + ".jar");
 
         try (ZipFile zip = new ZipFile(jar.toFile())) {
             if (zip.getEntry("coremods.json") != null || zip.getEntry("META-INF/coremods.json") != null) {
@@ -132,5 +135,21 @@ public final class ModBridgeAgent {
             while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
         }
         return HexFormat.of().formatHex(md.digest()).toUpperCase(Locale.ROOT);
+    }
+
+    /** sha256 of the running agent jar (covers bundled rules + shims); "dev" when exploded */
+    private static volatile String fp;
+
+    private static String fingerprint() {
+        if (fp == null) {
+            try {
+                Path self = Path.of(ModBridgeAgent.class.getProtectionDomain()
+                        .getCodeSource().getLocation().toURI());
+                fp = Files.isRegularFile(self) ? sha256(self) : "dev";
+            } catch (Exception e) {
+                fp = "dev";
+            }
+        }
+        return fp;
     }
 }

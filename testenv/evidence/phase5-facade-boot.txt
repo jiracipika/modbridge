@@ -1,0 +1,42 @@
+# phase-5 capability facade boot — server-121, agent drop-in, Mon Oct  5 19:00:47 EDT 2026
+
+## six boot cycles this phase (each: rules/shims change -> rebuild -> boot):
+# cycle 1 (18:52): supp NoClassDefFoundError ToolAction (phase-4 wall #1) FIXED ->
+#            new wall: ClassNotFoundException net.neoforged.neoforge.registries.ForgeRegistries$Keys
+#            ml: ObfRefl static-init wall (phase-4 wall #2) GONE -> new wall:
+#            NoSuchMethodError ModConfig.<init> 4-arg (ctor runs!)
+# cycle 2 (18:54): ForgeRegistries$ -> NeoForgeRegistries$ rule; supp ->
+#            NoClassDefFoundError ...common/capabilities/RegisterCapabilitiesEvent
+#            (supp clinit passed GLOBAL_LOOT_MODIFIER_SERIALIZERS + DeferredRegister.create)
+# cycle 3 (18:56): RegisterCapabilitiesEvent shim (+12th shim); mod bus rejects
+#            non-IModBusEvent listener types ->
+#            IllegalArgumentException: This bus only accepts subclasses of interface
+#            net.neoforged.fml.event.IModBusEvent
+# cycle 4 (18:57): shim implements IModBusEvent; supp ->
+#            ClassNotFoundException net.neoforged.neoforge.common.ForgeSpawnEggItem
+#            (moonlight PlatHelperImpl spawn-egg factory, called from supp ctor path)
+# cycle 5 (18:58): ForgeSpawnEggItem -> DeferredSpawnEggItem rule (ctor shape identical);
+#            BOTH mods now converge on ONE wall: moonlight ConfigSpecWrapper.<init>
+#            line 71 -> NoSuchMethodError: ModConfig.<init>(Type,IConfigSpec,ModContainer,String)
+#            (supp dies INSIDE its own CommonConfigs.<clinit> line 67, routed through
+#             moonlight's config API — i.e. supp's registry clinit fully passed)
+# capability chain (LazyOptional/Capability/CapabilityManager/ForgeCapabilities/
+# ICapabilityProvider/AttachCapabilitiesEvent/RegisterCapabilitiesEvent): ZERO crash
+# signatures across cycles 3-5 — behind the shim carrier.
+
+## final crash report excerpts (crash-2026-10-05_18.58.31-fml.txt):
+	at TRANSFORMER/moonlight@1.20-2.16.10/net.mehvahdjukaar.moonlight.api.platform.configs.forge.ConfigSpecWrapper.<init>(ConfigSpecWrapper.java:71) ~[moonlight-1.20-2.16.10-forge.jar%23123!/:?] {re:classloading,pl:runtimedistcleaner:A}
+-- Mod loading issue for: moonlight --
+	Failure message: Moonlight Library (moonlight) has failed to load correctly
+		java.lang.NoSuchMethodError: 'void net.neoforged.fml.config.ModConfig.<init>(net.neoforged.fml.config.ModConfig$Type, net.neoforged.fml.config.IConfigSpec, net.neoforged.fml.ModContainer, java.lang.String)'
+	Exception message: java.lang.NoSuchMethodError: 'void net.neoforged.fml.config.ModConfig.<init>(net.neoforged.fml.config.ModConfig$Type, net.neoforged.fml.config.IConfigSpec, net.neoforged.fml.ModContainer, java.lang.String)'
+	at TRANSFORMER/moonlight@1.20-2.16.10/net.mehvahdjukaar.moonlight.api.platform.configs.forge.ConfigSpecWrapper.<init>(ConfigSpecWrapper.java:71) ~[moonlight-1.20-2.16.10-forge.jar%23123!/:?] {re:classloading,pl:runtimedistcleaner:A}
+	at TRANSFORMER/moonlight@1.20-2.16.10/net.mehvahdjukaar.moonlight.core.CommonConfigs.<clinit>(CommonConfigs.java:29) ~[moonlight-1.20-2.16.10-forge.jar%23123!/:?] {re:classloading}
+-- Mod loading issue for: supplementaries --
+	Failure message: Supplementaries (supplementaries) has failed to load correctly
+		java.lang.NoSuchMethodError: 'void net.neoforged.fml.config.ModConfig.<init>(net.neoforged.fml.config.ModConfig$Type, net.neoforged.fml.config.IConfigSpec, net.neoforged.fml.ModContainer, java.lang.String)'
+
+## offline verification of the final translated jars (CLI translate, final rules):
+supp-final.jar: forge-refs=0, per-mod shims=12 (com/modbridge/shim/supplementaries/), ItemAbility refs=4
+ml-final.jar:   forge-refs=0, per-mod shims=12 (com/modbridge/shim/moonlight/), forge SpawnEgg ref -> DeferredSpawnEggItem
+agent jar:      rules/shims/ bundled (out/modbridge-agent.jar)

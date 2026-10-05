@@ -13,3 +13,5 @@ net/minecraftforge/event/entity/living/LivingDamageEvent|(F)V|setAmount=setNewDa
 net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216327_=create
 net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216337_=createThreadSafe
 net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216343_=createNewThreadLocalInstance
+# BlockToolModificationEvent accessor renamed in the fork (ToolAction -> ItemAbility).
+net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction=getItemAbility

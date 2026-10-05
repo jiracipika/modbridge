@@ -1,0 +1,32 @@
+=== phase 1: smoke (no mods) ===
+  [PASS] server boots with zero mods
+  [PASS] clean server stop before next phase
+=== phase 2: negative (untranslated 1.20.1 jar must be rejected) ===
+  [PASS] loader flags untranslated jar (skip warning)
+  [PASS] fixture did not initialize (no constructor line)
+  [PASS] clean server stop before next phase
+=== phase 3: connector flow (drop 1.20.1 jar into source-1201, agent translates at boot) ===
+  [FAIL] server boots with agent-translated mod
+  [PASS] agent detected and translated the source jar
+  [PASS] translated jar installed into mods/
+  [FAIL] fixture constructor ran (original 1.20.1 bytecode path)
+  [FAIL] command registration event fired
+  rcon> fixtureping
+  rcon< Traceback (most recent call last):
+  rcon<   File "/Volumes/ADATA/projects/modbridge/testenv/rcon.py", line 53, in <module>
+  rcon<     main()
+  rcon<   File "/Volumes/ADATA/projects/modbridge/testenv/rcon.py", line 29, in main
+  rcon<     s = socket.create_connection(('127.0.0.1', port), timeout=30)
+  rcon<   File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socket.py", line 843, in create_connection
+  rcon<     raise err
+  rcon<   File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socket.py", line 831, in create_connection
+  rcon<     sock.connect(sa)
+  rcon< ConnectionRefusedError: [Errno 61] Connection refused
+  [FAIL] fixtureping returns registered item id
+  [PASS] clean server stop before next phase
+=== phase 4: warm reboot (cache must make re-translation free) ===
+  [FAIL] server boots again with warm cache
+  [PASS] agent reused the hash cache (no re-translate)
+  [FAIL] mod initialized on reboot
+  [PASS] clean final stop
+=== matrix: 10 passed, 6 failed ===
