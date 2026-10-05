@@ -2,9 +2,16 @@
 # NeoForge's fork layout: mod-API classes live under net.neoforged.neoforge.*, while
 # framework libraries were re-rooted directly under net.neoforged.<lib>.
 # More-specific prefixes first; the bare forge->neoforged line is the fallback.
+# (Phase-4 audit against the 1.21.1 platform classlist proved the product-rooted
+#  prefixes below must come before the bare fallback: the bare rename drops the
+#  /neoforge/ segment and leaves references to classes that no longer exist.)
 net/minecraftforge/registries/=net/neoforged/neoforge/registries/
 net/minecraftforge/common/=net/neoforged/neoforge/common/
 net/minecraftforge/event/=net/neoforged/neoforge/event/
 net/minecraftforge/eventbus/=net/neoforged/bus/
 net/minecraftforge/fml/=net/neoforged/fml/
+net/minecraftforge/fluids/=net/neoforged/neoforge/fluids/
+net/minecraftforge/items/=net/neoforged/neoforge/items/
+net/minecraftforge/client/=net/neoforged/neoforge/client/
+net/minecraftforge/server/=net/neoforged/neoforge/server/
 net/minecraftforge/=net/neoforged/

@@ -11,9 +11,13 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.FrameNode;
-import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.InnerClassNode;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.LocalVariableNode;
 import org.objectweb.asm.tree.MethodInsnNode;
@@ -33,9 +37,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
@@ -73,6 +80,22 @@ public class Rewriter {
     /** matches an L-reference inside descriptors and signature strings; group 1 = internal name */
     private static final Pattern L_REF = Pattern.compile("L([A-Za-z0-9_/$]+)(;|<)");
 
+    private static final String MIXIN_ANNOTATION = "Lorg/spongepowered/asm/mixin/Mixin;";
+    private static final String ACCESSOR_ANNOTATION = "Lorg/spongepowered/asm/mixin/gen/Accessor;";
+    private static final String INVOKER_ANNOTATION = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+    private static final String SHADOW_ANNOTATION = "Lorg/spongepowered/asm/mixin/Shadow;";
+    /** accessor/invoker idiom: Mixin derives the target member by stripping this prefix */
+    private static final Pattern ACCESSOR_METHOD_NAME = Pattern.compile("(get|set|is|invoke|call)([A-Z].*)");
+    /** MixinExtras injector annotations carry their own require/expect strictness and do
+     * NOT inherit the config's defaultRequire — drifted call sites must fail soft. */
+    private static final String MIXINEXTRAS_INJECTOR_PREFIX = "Lcom/llamalad7/mixinextras/injector/";
+    /** synthetic mod-class members backing the bus-parameter constructor rewrite */
+    private static final String MOD_BUS_FIELD = "mb$bus";
+    private static final String MOD_INIT_METHOD = "mb$init";
+    /** platform-owned package spaces whose classes the classlist can vouch for */
+    private static final String[] PLATFORM_PACKAGES = {"net/minecraft/", "net/neoforged/", "net/minecraftforge/"};
+    private static final String ACCESS_TRANSFORMER = "META-INF/accesstransformer.cfg";
+
     final Map<String, String> typeRenames = new HashMap<>();
     final List<String[]> packageRenames = new ArrayList<>();
     final Map<String, String> memberRenames = new HashMap<>();
@@ -82,9 +105,31 @@ public class Rewriter {
     /** SRG member id (m_123_/f_123_) -> mojmap name; 1.20.1 production mods reference
      *  vanilla members by SRG name while NeoForge 21.1 runs mojmap. */
     final Map<String, String> srgMemberRenames = new HashMap<>();
+    /** 1.20.1 mojmap member name -> 1.21.1 mojmap name (renames only; bare names).
+     *  Covers the mojmap->mojmap drift SRG ids already absorb for call sites but that
+     *  leaks through dev-space names: @Accessor/@Invoker method-name derivation and
+     *  dev-name strings in mixin annotations/refmaps (e.g. tryCatchFire -> checkBurnOut). */
+    final Map<String, String> mojMemberRenames = new HashMap<>();
+    /** 1.21.1 platform member inventory (owner -> name -> descriptors) backing the
+     *  accessor/invoker and @Shadow drift checks. Optional — empty disables them. */
+    final Map<String, Map<String, Set<String>>> memberTargets = new HashMap<>();
     /** call-site retargets for members that became interface-default methods:
      *  owner|desc|name -> newOwner|newDesc|interface-or-virtual */
     final Map<String, String[]> memberRetargets = new HashMap<>();
+    /** 1.21.1 platform class universe (internal names): minecraft server + neoforge
+     *  libraries. Optional — when absent, only leftover forge refs count as drift. */
+    final Set<String> classlist = new HashSet<>();
+
+    // phase-4 accounting (mixin refmap remap + drift neutralization)
+    int mixinClassesSeen;
+    int refmapsRemapped;
+    int nestedJarsDropped;
+    int atLinesRemapped;
+    int atLinesUnmapped;
+    /** slash-internal names of mixin classes removed from the translation */
+    final Set<String> neutralizedMixins = new LinkedHashSet<>();
+    /** per-neutralized-mixin drift reasons, for the translation report */
+    final List<String> neutralizationLog = new ArrayList<>();
 
     int fmlChainsSpliced;
     int resourceLocationCtors;
@@ -112,6 +157,9 @@ public class Rewriter {
         addDescRules(readLines(rulesDir.resolve("memberdescrenames.txt")));
         addSrgRules(readLines(rulesDir.resolve("srgmembers.txt")));
         addRetargetRules(readLines(rulesDir.resolve("memberretargets.txt")));
+        addClasslist(readLines(rulesDir.resolve("classlist-1211.txt")));
+        addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
+        addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
         printRuleStats();
     }
 
@@ -123,6 +171,9 @@ public class Rewriter {
         addDescRules(resourceLines("/rules/memberdescrenames.txt"));
         addSrgRules(resourceLines("/rules/srgmembers.txt"));
         addRetargetRules(resourceLines("/rules/memberretargets.txt"));
+        addClasslist(resourceLinesOptional("/rules/classlist-1211.txt"));
+        addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
+        addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
         printRuleStats();
     }
 
@@ -133,9 +184,37 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d classlist, %d mojrenames, %d member-targets classes%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
-                memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size());
+                memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
+                classlist.size(), mojMemberRenames.size(), memberTargets.size());
+    }
+
+    private void addClasslist(List<String> lines) {
+        for (String line : lines) {
+            String t = line.trim();
+            if (!t.isEmpty() && !t.startsWith("#")) classlist.add(t);
+        }
+    }
+
+    private void addMojMemberRenames(List<String> lines) throws IOException {
+        for (String line : lines) {
+            int eq = line.indexOf('=');
+            if (eq <= 0 || line.startsWith("#")) continue;
+            mojMemberRenames.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+        }
+    }
+
+    private void addMemberTargets(List<String> lines) {
+        for (String line : lines) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            String[] parts = t.split(" ");
+            if (parts.length != 3) continue;
+            memberTargets.computeIfAbsent(parts[0], k -> new HashMap<>())
+                    .computeIfAbsent(parts[1], k -> new HashSet<>())
+                    .add(parts[2]);
+        }
     }
 
     private void addRetargetRules(List<String> lines) throws IOException {
@@ -208,6 +287,15 @@ public class Rewriter {
         }
     }
 
+    /** like resourceLines, but a missing resource yields an empty list (optional rule file) */
+    private static List<String> resourceLinesOptional(String path) throws IOException {
+        try (InputStream is = Rewriter.class.getResourceAsStream(path)) {
+            if (is == null) return List.of();
+            return new java.io.BufferedReader(new java.io.InputStreamReader(is, StandardCharsets.UTF_8))
+                    .lines().map(String::trim).filter(l -> !l.isEmpty() && !l.startsWith("#")).toList();
+        }
+    }
+
     private static List<String> readLines(Path p) throws IOException {
         List<String> out = new ArrayList<>();
         if (!Files.exists(p)) return out;
@@ -235,16 +323,49 @@ public class Rewriter {
             }
         }
 
+        // phase-4: parse mixin configs up front so drift-checking can tell which mixin
+        // classes actually load on a dedicated server (common/"mixins"+"server" arrays vs "client")
+        Map<String, Object> mixinConfigs = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+            if (!e.getKey().endsWith(".json")) continue;
+            try {
+                Object parsed = Json.parse(new String(e.getValue(), StandardCharsets.UTF_8));
+                if (RefmapRemapper.isMixinConfig(parsed)) mixinConfigs.put(e.getKey(), parsed);
+            } catch (Json.JsonError ignored) {
+                // not JSON we care about; leave untouched
+            }
+        }
+        Set<String> serverMixins = serverSideMixinClasses(mixinConfigs);
+
         List<String> names = new ArrayList<>(entries.keySet());
         for (String name : names) {
             if (!name.endsWith(".class")) continue;
             ClassNode cn = new ClassNode();
             new ClassReader(entries.get(name)).accept(cn, 0);
+            boolean mixin = isMixinClass(cn);
+            if (mixin) mixinClassesSeen++;
             transform(cn);
+            if (mixin && driftCheckable(cn.name, serverMixins)) {
+                List<String> reasons = mixinDriftReasons(cn);
+                if (!reasons.isEmpty()) {
+                    neutralizedMixins.add(cn.name);
+                    for (String reason : reasons) {
+                        neutralizationLog.add(cn.name + ": " + reason);
+                    }
+                    entries.remove(name); // drop the class from the translation entirely
+                    continue;
+                }
+            }
             entries.remove(name);
             entries.put(cn.name + ".class", toBytes(cn));
             classesTransformed++;
         }
+
+        // phase-4 resource passes: refmaps, mixin configs, accesstransformer, nested jars
+        remapRefmaps(entries);
+        pruneMixinConfigs(entries, mixinConfigs);
+        remapAccessTransformer(entries);
+        dropNestedJars(entries);
 
         entries.put("META-INF/neoforge.mods.toml",
                 generateModsToml(modsToml).getBytes(StandardCharsets.UTF_8));
@@ -266,7 +387,46 @@ public class Rewriter {
         verifyNoForgeRefs(out);
         System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, member renames=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, memberRenamesApplied);
+        System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
+                refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
+        for (String line : neutralizationLog) {
+            System.out.println("neutralized mixin: " + line);
+        }
+        if (atLinesRemapped > 0 || atLinesUnmapped > 0) {
+            System.out.printf("accesstransformer.cfg: %d member refs remapped, %d left SRG (owner outside table universe)%n",
+                    atLinesRemapped, atLinesUnmapped);
+        }
         System.out.println("wrote " + out);
+    }
+
+    /**
+     * Internal names of the mixin classes that a dedicated server will actually load:
+     * every entry of a config's "mixins" and "server" arrays (package-relative). Classes
+     * only listed under "client" never load there and are exempt from drift neutralization.
+     */
+    private static Set<String> serverSideMixinClasses(Map<String, Object> mixinConfigs) {
+        Set<String> out = new HashSet<>();
+        for (Object cfg : mixinConfigs.values()) {
+            if (!(cfg instanceof Map<?, ?> m) || !(m.get("package") instanceof String pkg)) continue;
+            String pkgSlash = pkg.replace('.', '/') + "/";
+            for (String arrayKey : RefmapRemapper.dedicatedSideArrays()) {
+                if (m.get(arrayKey) instanceof List<?> l) {
+                    for (Object o : l) {
+                        if (o instanceof String entry) {
+                            // entries are package-relative and may carry subpackage dots
+                            // ("self.SelfOpenableContainerMixin")
+                            out.add(pkgSlash + entry.replace('.', '/'));
+                        }
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** unlisted @Mixin classes are treated as server-loadable (conservative default) */
+    private static boolean driftCheckable(String internalName, Set<String> serverMixins) {
+        return serverMixins.isEmpty() || serverMixins.contains(internalName);
     }
 
     void transform(ClassNode cn) {
@@ -274,33 +434,503 @@ public class Rewriter {
             rewriteModConstructor(cn);
         }
         rewriteResourceLocationCtors(cn);
+        // phase-4: mixin annotations carry their injection targets as plain string
+        // constants ASM cannot resolve — rewrite them in the raw 1.20.1 space before
+        // the generic passes (remapClass only touches Type/enum values, not strings).
+        if (isMixinClass(cn)) {
+            remapMixinAnnotationStrings(cn);
+            remapAccessorMembers(cn);
+        }
         applyMemberRenames(cn);
         remapClass(cn);
     }
 
     private static boolean isModClass(ClassNode cn) {
-        if (cn.visibleAnnotations == null) return false;
-        for (AnnotationNode an : cn.visibleAnnotations) {
-            if (MOD_ANNOTATION.equals(an.desc)) return true;
+        return hasAnnotation(cn, MOD_ANNOTATION);
+    }
+
+    private static boolean isMixinClass(ClassNode cn) {
+        return hasAnnotation(cn, MIXIN_ANNOTATION);
+    }
+
+    /** @Mixin (and friends) are CLASS retention: they land in RuntimeInvisibleAnnotations */
+    private static boolean hasAnnotation(ClassNode cn, String desc) {
+        if (cn.visibleAnnotations != null) {
+            for (AnnotationNode an : cn.visibleAnnotations) {
+                if (desc.equals(an.desc)) return true;
+            }
+        }
+        if (cn.invisibleAnnotations != null) {
+            for (AnnotationNode an : cn.invisibleAnnotations) {
+                if (desc.equals(an.desc)) return true;
+            }
         }
         return false;
+    }
+
+    /** SRG id -> mojmap name, or null when outside the table universe (never guessed) */
+    String srgOrNull(String id) {
+        return srgMemberRenames.get(id);
+    }
+
+    /** remaps one mixin reference string (SRG ids, L-refs, dotted/slash class names) */
+    String remapMemberRefString(String s) {
+        return RefmapRemapper.remapRefString(s, this::srgOrNull, this::remapType, mojMemberRenames::get);
+    }
+
+    private void remapMixinAnnotationStrings(ClassNode cn) {
+        remapAnnotationStrings(cn.visibleAnnotations);
+        remapAnnotationStrings(cn.invisibleAnnotations);
+        if (cn.fields != null) {
+            for (FieldNode f : cn.fields) {
+                remapAnnotationStrings(f.visibleAnnotations);
+                remapAnnotationStrings(f.invisibleAnnotations);
+            }
+        }
+        if (cn.methods != null) {
+            for (MethodNode m : cn.methods) {
+                remapAnnotationStrings(m.visibleAnnotations);
+                remapAnnotationStrings(m.invisibleAnnotations);
+                if (m.visibleParameterAnnotations != null) {
+                    for (List<AnnotationNode> anns : m.visibleParameterAnnotations) remapAnnotationStrings(anns);
+                }
+                if (m.invisibleParameterAnnotations != null) {
+                    for (List<AnnotationNode> anns : m.invisibleParameterAnnotations) remapAnnotationStrings(anns);
+                }
+            }
+        }
+    }
+
+    private void remapAnnotationStrings(List<AnnotationNode> annotations) {
+        if (annotations == null) return;
+        for (AnnotationNode an : annotations) {
+            if (an == null) continue;
+            if (an.desc != null && an.desc.startsWith(MIXINEXTRAS_INJECTOR_PREFIX)) {
+                // require=0: a drifted call site logs an error instead of InjectionError
+                setAnnotationValue(an, "require", 0);
+            }
+            boolean accessorDecl = ACCESSOR_ANNOTATION.equals(an.desc) || INVOKER_ANNOTATION.equals(an.desc);
+            if (an.values == null) continue;
+            for (int i = 1; i < an.values.size(); i += 2) {
+                Object v = remapAnnotationStringValue(an.values.get(i));
+                // an explicit @Accessor("name")/@Invoker("name") is a dev-space member name:
+                // apply the mojmap->mojmap rename table on exact match
+                if (accessorDecl && "value".equals(an.values.get(i - 1))
+                        && v instanceof String s && mojMemberRenames.containsKey(s)) {
+                    v = mojMemberRenames.get(s);
+                }
+                an.values.set(i, v);
+            }
+        }
+    }
+
+    /**
+     * Mixin derives an accessor/invoker's target member from the proxy method name
+     * (invokeTryCatchFire -> tryCatchFire). That name is 1.20.1 dev-space; when Mojang
+     * renamed the member across to 1.21.1 the derivation must follow
+     * (mojmemberrenames.txt), or the accessor stops matching (InvalidAccessorException).
+     */
+    void remapAccessorMembers(ClassNode cn) {
+        if (mojMemberRenames.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            if (hasAccessorAnnotation(mn)) {
+                Matcher m = ACCESSOR_METHOD_NAME.matcher(mn.name);
+                if (!m.matches()) continue;
+                String derived = Character.toLowerCase(m.group(2).charAt(0)) + m.group(2).substring(1);
+                String renamed = mojMemberRenames.get(derived);
+                if (renamed != null) {
+                    mn.name = m.group(1) + Character.toUpperCase(renamed.charAt(0)) + renamed.substring(1);
+                }
+            } else if (hasShadowAnnotation(mn.visibleAnnotations, mn.invisibleAnnotations)) {
+                String renamed = mojMemberRenames.get(mn.name);
+                if (renamed != null) mn.name = renamed;
+            }
+        }
+        if (cn.fields != null) {
+            for (FieldNode f : cn.fields) {
+                if (hasShadowAnnotation(f.visibleAnnotations, f.invisibleAnnotations)) {
+                    String renamed = mojMemberRenames.get(f.name);
+                    if (renamed != null) f.name = renamed;
+                }
+            }
+        }
+    }
+
+    private static boolean hasAccessorAnnotation(MethodNode mn) {
+        for (List<AnnotationNode> anns : new List[]{mn.visibleAnnotations, mn.invisibleAnnotations}) {
+            if (anns == null) continue;
+            for (AnnotationNode an : anns) {
+                if (ACCESSOR_ANNOTATION.equals(an.desc) || INVOKER_ANNOTATION.equals(an.desc)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** derived (lower-cased, prefix-stripped) target member name of an accessor/invoker method */
+    private static String accessorTargetName(String methodName) {
+        Matcher m = ACCESSOR_METHOD_NAME.matcher(methodName);
+        if (!m.matches()) return null;
+        return Character.toLowerCase(m.group(2).charAt(0)) + m.group(2).substring(1);
+    }
+
+    private static void setAnnotationValue(AnnotationNode an, String key, Object value) {
+        if (an.values == null) an.values = new ArrayList<>();
+        for (int i = 0; i < an.values.size(); i += 2) {
+            if (key.equals(an.values.get(i))) {
+                an.values.set(i + 1, value);
+                return;
+            }
+        }
+        an.values.add(key);
+        an.values.add(value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object remapAnnotationStringValue(Object v) {
+        if (v instanceof String s) {
+            return remapMemberRefString(s);
+        }
+        if (v instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list);
+            for (int i = 0; i < copy.size(); i++) {
+                copy.set(i, remapAnnotationStringValue(copy.get(i)));
+            }
+            return copy;
+        }
+        if (v instanceof AnnotationNode nested) {
+            remapAnnotationStrings(java.util.Collections.singletonList(nested));
+        }
+        return v;
+    }
+
+    // ------------------------------------------------------------- phase-4: drift
+
+    /**
+     * A mixin class is neutralized (dropped, config entry removed, drift reported) when
+     * its target or any eagerly-loaded platform class it declares is absent from the
+     * 1.21.1 platform (cross-version class drift, e.g. removed forge capability holder
+     * API). Left broken it would hard-fail the whole mixin config; dropped, the rest of
+     * the mod still injects.
+     */
+    List<String> mixinDriftReasons(ClassNode cn) {
+        List<String> reasons = new ArrayList<>();
+        List<String> targets = mixinTargets(cn);
+        for (String target : targets) {
+            if (isPlatformType(target) && !classKnown(target)) {
+                reasons.add("mixin target " + target + " absent from 1.21.1 platform");
+            }
+        }
+        for (String ref : eagerPlatformRefs(cn)) {
+            if (isPlatformType(ref) && !classKnown(ref)) {
+                reasons.add("eagerly references " + ref + " absent from 1.21.1 platform");
+            }
+        }
+        // accessor/invoker member existence: a proxy whose target member was removed or
+        // renamed (and not covered by mojmemberrenames.txt) can never apply
+        if (!memberTargets.isEmpty()) {
+            for (MethodNode mn : cn.methods) {
+                if (!hasAccessorAnnotation(mn)) continue;
+                String derived = explicitAccessorValue(mn);
+                if (derived == null) derived = accessorTargetName(mn.name);
+                if (derived == null) continue;
+                for (String target : targets) {
+                    Map<String, Set<String>> members = memberTargets.get(target);
+                    if (members == null) continue; // non-platform or unknown target
+                    if (!members.containsKey(derived)) {
+                        reasons.add("accessor target " + target + "." + derived
+                                + " absent from 1.21.1 member inventory");
+                    }
+                }
+            }
+            // @Shadow members bind the mixin to the target's exact member: a drifted
+            // name or descriptor (mojmap-version API churn, e.g. MobEffect ->
+            // Holder<MobEffect>) breaks the apply — recoverable only by argument-level
+            // shims, so the mixin is neutralized with the drift recorded.
+            for (MethodNode mn : cn.methods) {
+                if (!hasShadowAnnotation(mn.visibleAnnotations, mn.invisibleAnnotations)) continue;
+                String desc = remapDesc(mn.desc);
+                for (String target : targets) {
+                    Map<String, Set<String>> members = memberTargets.get(target);
+                    if (members == null) continue;
+                    Set<String> descs = members.get(mn.name);
+                    if (descs == null || !descs.contains(desc)) {
+                        reasons.add("@Shadow " + mn.name + desc + " not present on " + target
+                                + " in 1.21.1 (name or descriptor drifted)");
+                    }
+                }
+            }
+            if (cn.fields != null) {
+                for (FieldNode f : cn.fields) {
+                    if (!hasShadowAnnotation(f.visibleAnnotations, f.invisibleAnnotations)) continue;
+                    String desc = remapDesc(f.desc);
+                    for (String target : targets) {
+                        Map<String, Set<String>> members = memberTargets.get(target);
+                        if (members == null) continue;
+                        Set<String> descs = members.get(f.name);
+                        if (descs == null || !descs.contains(desc)) {
+                            reasons.add("@Shadow " + f.name + " " + desc + " not present on " + target
+                                    + " in 1.21.1 (name or descriptor drifted)");
+                        }
+                    }
+                }
+            }
+        }
+        return reasons;
+    }
+
+    private static boolean hasShadowAnnotation(List<AnnotationNode>... annotationLists) {
+        for (List<AnnotationNode> anns : annotationLists) {
+            if (anns == null) continue;
+            for (AnnotationNode an : anns) {
+                if (SHADOW_ANNOTATION.equals(an.desc)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** explicit @Accessor("...")/@Invoker("...") target member, when given */
+    private static String explicitAccessorValue(MethodNode mn) {
+        for (List<AnnotationNode> anns : new List[]{mn.visibleAnnotations, mn.invisibleAnnotations}) {
+            if (anns == null) continue;
+            for (AnnotationNode an : anns) {
+                if (!ACCESSOR_ANNOTATION.equals(an.desc) && !INVOKER_ANNOTATION.equals(an.desc)) continue;
+                if (an.values == null) continue;
+                for (int i = 0; i + 1 < an.values.size(); i += 2) {
+                    if ("value".equals(an.values.get(i)) && an.values.get(i + 1) instanceof String s) {
+                        return s;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** @Mixin value types (already remapped to 1.21.1 space by transform) and targets strings */
+    private static List<String> mixinTargets(ClassNode cn) {
+        List<String> out = new ArrayList<>();
+        for (List<AnnotationNode> anns : new List[]{cn.visibleAnnotations, cn.invisibleAnnotations}) {
+            if (anns == null) continue;
+            for (AnnotationNode an : anns) {
+                if (!MIXIN_ANNOTATION.equals(an.desc) || an.values == null) continue;
+                // ASM tree: values alternate name (even index), value (odd index)
+                for (int i = 0; i + 1 < an.values.size(); i += 2) {
+                    if ("targets".equals(an.values.get(i)) && an.values.get(i + 1) instanceof String s) {
+                        out.add(s.replace('.', '/'));
+                    } else if ("value".equals(an.values.get(i))) {
+                        collectTargetTypes(an.values.get(i + 1), out);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void collectTargetTypes(Object v, List<String> out) {
+        if (v instanceof Type t) {
+            out.add(t.getDescriptor().replaceFirst("^L", "").replaceFirst(";$", ""));
+        } else if (v instanceof List<?> l) {
+            for (Object o : l) collectTargetTypes(o, out);
+        }
+    }
+
+    /** every platform class the JVM must resolve the moment this mixin class loads */
+    private static Set<String> eagerPlatformRefs(ClassNode cn) {
+        Set<String> refs = new LinkedHashSet<>();
+        if (cn.superName != null) refs.add(cn.superName);
+        if (cn.interfaces != null) refs.addAll(cn.interfaces);
+        if (cn.fields != null) {
+            for (FieldNode f : cn.fields) addDescInternals(refs, f.desc);
+        }
+        if (cn.methods != null) {
+            for (MethodNode m : cn.methods) {
+                addDescInternals(refs, m.desc);
+                if (m.exceptions != null) {
+                    for (String ex : m.exceptions) {
+                        if (isPlatformType(ex)) refs.add(ex);
+                    }
+                }
+            }
+        }
+        if (cn.recordComponents != null) {
+            for (org.objectweb.asm.tree.RecordComponentNode rc : cn.recordComponents) {
+                addDescInternals(refs, rc.descriptor);
+            }
+        }
+        return refs;
+    }
+
+    private static void addDescInternals(Set<String> refs, String desc) {
+        if (desc == null) return;
+        Matcher m = L_REF.matcher(desc);
+        while (m.find()) {
+            String internal = m.group(1);
+            if (isPlatformType(internal)) refs.add(internal);
+        }
+    }
+
+    private static boolean isPlatformType(String internal) {
+        for (String prefix : PLATFORM_PACKAGES) {
+            if (internal.startsWith(prefix)) return true;
+        }
+        return false;
+    }
+
+    /** classlist empty (no inventory shipped) -> only leftover forge refs count as drift */
+    private boolean classKnown(String internal) {
+        if (classlist.isEmpty()) return !internal.startsWith("net/minecraftforge/");
+        return classlist.contains(internal);
+    }
+
+    // --------------------------------------------------- phase-4: jar resource passes
+
+    /** rewrites every mixin refmap (keys + values SRG -> mojmap), then prunes neutralized entries */
+    private void remapRefmaps(Map<String, byte[]> entries) throws IOException {
+        List<String> names = new ArrayList<>(entries.keySet());
+        for (String name : names) {
+            boolean byName = name.endsWith("-refmap.json");
+            if (!byName && !name.endsWith(".json")) continue;
+            Object parsed;
+            try {
+                parsed = Json.parse(new String(entries.get(name), StandardCharsets.UTF_8));
+            } catch (Json.JsonError e) {
+                continue;
+            }
+            if (!RefmapRemapper.isRefmap(parsed)) continue;
+            parsed = RefmapRemapper.remapTreeStrings(parsed, this::remapMemberRefString);
+            RefmapRemapper.stripRefmapClasses(parsed, neutralizedMixins);
+            entries.put(name, Json.write(parsed).getBytes(StandardCharsets.UTF_8));
+            refmapsRemapped++;
+        }
+    }
+
+    /**
+     * Removes neutralized mixin classes from their configs' server-side arrays, and
+     * downgrades injector strictness (defaultRequire 1 -> 0): refmap remapping cannot
+     * prove the *wrapped call site* still exists in 1.21.1 (NeoForge also patches
+     * vanilla bodies — e.g. PoiType's ctor no longer calls Set.copyOf), and a single
+     * drifted injector must log an error, not kill the whole mod's boot.
+     */
+    private void pruneMixinConfigs(Map<String, byte[]> entries, Map<String, Object> mixinConfigs) throws IOException {
+        for (Map.Entry<String, Object> e : mixinConfigs.entrySet()) {
+            boolean changed = false;
+            List<String> removed = RefmapRemapper.stripMixins(e.getValue(), neutralizedMixins);
+            if (!removed.isEmpty()) {
+                changed = true;
+                for (String simple : removed) {
+                    System.out.println("mixin config " + e.getKey() + ": dropped entry " + simple + " (neutralized)");
+                }
+            }
+            if (e.getValue() instanceof Map<?, ?> m && m.get("injectors") instanceof Map<?, ?> inj) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> injectors = (Map<String, Object>) inj;
+                Object require = injectors.get("defaultRequire");
+                if (require instanceof Number n && n.intValue() != 0) {
+                    injectors.put("defaultRequire", 0);
+                    changed = true;
+                    System.out.println("mixin config " + e.getKey()
+                            + ": defaultRequire " + n.intValue() + " -> 0 (call-site drift fails soft, logged)");
+                }
+            }
+            if (changed) {
+                entries.put(e.getKey(), Json.write(e.getValue()).getBytes(StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    /** SRG member ids and class names inside accesstransformer.cfg meet the same runtime */
+    private void remapAccessTransformer(Map<String, byte[]> entries) throws IOException {
+        byte[] bytes = entries.get(ACCESS_TRANSFORMER);
+        if (bytes == null) return;
+        String content = new String(bytes, StandardCharsets.UTF_8);
+        StringBuilder out = new StringBuilder();
+        for (String line : content.split("\n", -1)) {
+            String trimmed = line.strip();
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("-")) {
+                out.append(line).append('\n');
+                continue;
+            }
+            String code = line, tail = "";
+            int hash = line.indexOf('#');
+            if (hash >= 0) {
+                code = line.substring(0, hash);
+                tail = line.substring(hash);
+            }
+            String[] parts = code.trim().split("\\s+");
+            if (parts.length >= 2) {
+                // <modifier>+ <dotted.Class> [<member>] — class names stay dotted in the file
+                parts[1] = RefmapRemapper.remapRefString(parts[1], this::srgOrNull, this::remapType);
+                if (parts.length >= 3) {
+                    String before = parts[2];
+                    parts[2] = remapMemberRefString(before);
+                    if (before.equals(parts[2]) && before.matches(".*(?:^|[^A-Za-z0-9_])(?:m|f)_\\d+_.*")) {
+                        atLinesUnmapped++;
+                    } else if (!before.equals(parts[2])) {
+                        atLinesRemapped++;
+                    }
+                }
+            }
+            out.append(String.join(" ", parts)).append(tail).append('\n');
+        }
+        entries.put(ACCESS_TRANSFORMER, out.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Nested forge-side jars cannot ride along (the platform exports the same packages —
+     * e.g. MixinExtras — at module level), and stripped META-INF/jars entries leave
+     * META-INF/jarjar/metadata.json pointing at ghosts. Both are removed wholesale.
+     */
+    private void dropNestedJars(Map<String, byte[]> entries) {
+        List<String> names = new ArrayList<>(entries.keySet());
+        for (String name : names) {
+            if (name.startsWith("META-INF/jars/") || name.startsWith("META-INF/jarjar/")) {
+                entries.remove(name);
+                nestedJarsDropped++;
+            }
+        }
     }
 
     /**
      * 1.20.1 mods grab the mod event bus via FMLJavaModLoadingContext inside a no-arg
      * constructor; NeoForge 1.21 injects the bus as a constructor parameter instead.
-     * Rewrites {@code <init>()V} to {@code <init>(IEventBus)V} and splices the lookup
-     * chain into {@code ALOAD 1}.
+     *
+     * The naive splice (insert ALOAD 1 into the old body) silently corrupts every
+     * StackMapTable frame of the constructor: the body's locals all shift by one while
+     * the copied frames keep describing the old layout (an AIOOBE at class-load time in
+     * ASM's frame expander). Instead the original body MOVES verbatim into a synthetic
+     * {@code mb$init()V} — identical local layout [this, locals...], frames stay valid —
+     * and the new real constructor is a short frame-free stub: super call, stash the bus
+     * into a synthetic static field, call mb$init.
      */
     void rewriteModConstructor(ClassNode cn) {
-        boolean changed = false;
-        for (MethodNode mn : cn.methods) {
+        for (MethodNode mn : new ArrayList<>(cn.methods)) {
             if (!"<init>".equals(mn.name) || !"()V".equals(mn.desc)) continue;
-            boolean found = false;
+
+            // locate the super-constructor call; it must head a pure-push prefix
             AbstractInsnNode n = mn.instructions.getFirst();
+            List<AbstractInsnNode> superArgs = new ArrayList<>();
+            MethodInsnNode superCall = null;
             while (n != null) {
-                AbstractInsnNode next = n.getNext();
-                if (n instanceof MethodInsnNode m1
+                if (n instanceof MethodInsnNode m && m.getOpcode() == Opcodes.INVOKESPECIAL
+                        && "<init>".equals(m.name)) {
+                    superCall = m;
+                    break;
+                }
+                // pseudo-instructions are transparent to the prefix scan
+                if (n instanceof LabelNode || n instanceof FrameNode || n instanceof LineNumberNode) {
+                    n = n.getNext();
+                    continue;
+                }
+                if (!isPurePush(n)) break;
+                superArgs.add(n);
+                n = n.getNext();
+            }
+            if (superCall == null) continue;
+
+            boolean found = false;
+            AbstractInsnNode i = superCall.getNext();
+            while (i != null) {
+                AbstractInsnNode next = i.getNext();
+                if (i instanceof MethodInsnNode m1
                         && m1.getOpcode() == Opcodes.INVOKESTATIC
                         && "get".equals(m1.name)
                         && FML_CONTEXT.equals(m1.owner)
@@ -308,24 +938,90 @@ public class Rewriter {
                         && m2.getOpcode() == Opcodes.INVOKEVIRTUAL
                         && "getModEventBus".equals(m2.name)
                         && FML_CONTEXT.equals(m2.owner)) {
-                    VarInsnNode aload = new VarInsnNode(Opcodes.ALOAD, 1);
-                    mn.instructions.insert(next, aload);
-                    mn.instructions.remove(n);
-                    mn.instructions.remove(next);
-                    n = aload.getNext();
                     found = true;
-                    fmlChainsSpliced++;
-                } else {
-                    n = next;
+                    i = next;
+                    break;
                 }
+                i = next;
             }
-            if (found) {
-                mn.desc = "(L" + EVENT_BUS + ";)V";
-                changed = true;
+            if (!found) continue; // plain no-arg ctor is also valid on NeoForge 1.21
+
+            // synthetic static holder for the bus, and mb$init()V with the original body
+            cn.fields.add(new FieldNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+                    MOD_BUS_FIELD, "L" + EVENT_BUS + ";", null, null));
+            MethodNode mbInit = new MethodNode((mn.access & ~Opcodes.ACC_PUBLIC) | Opcodes.ACC_PRIVATE
+                    | Opcodes.ACC_SYNTHETIC, MOD_INIT_METHOD, "()V", mn.signature,
+                    mn.exceptions == null ? new String[0] : mn.exceptions.toArray(new String[0]));
+            mbInit.visibleAnnotations = mn.visibleAnnotations;
+            mbInit.invisibleAnnotations = mn.invisibleAnnotations;
+            mbInit.localVariables = mn.localVariables;
+
+            // move the body after the super call into mb$init, splicing the bus lookup
+            int spliced = 0;
+            AbstractInsnNode body = superCall.getNext();
+            while (body != null) {
+                AbstractInsnNode next = body.getNext();
+                if (body instanceof MethodInsnNode m1
+                        && m1.getOpcode() == Opcodes.INVOKESTATIC
+                        && "get".equals(m1.name)
+                        && FML_CONTEXT.equals(m1.owner)
+                        && next instanceof MethodInsnNode m2
+                        && m2.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && "getModEventBus".equals(m2.name)
+                        && FML_CONTEXT.equals(m2.owner)) {
+                    AbstractInsnNode after = next.getNext(); // capture before removals (ASM nulls links)
+                    FieldInsnNode getBus = new FieldInsnNode(Opcodes.GETSTATIC,
+                            cn.name, MOD_BUS_FIELD, "L" + EVENT_BUS + ";");
+                    mbInit.instructions.add(getBus);
+                    mn.instructions.remove(m1);
+                    mn.instructions.remove(m2);
+                    fmlChainsSpliced++;
+                    spliced++;
+                    body = after;
+                    continue;
+                }
+                mn.instructions.remove(body);
+                mbInit.instructions.add(body);
+                body = next;
             }
+            mbInit.maxStack = mn.maxStack;
+            mbInit.maxLocals = mn.maxLocals;
+            cn.methods.add(mbInit);
+
+            // the new real constructor: super call, stash bus, delegate
+            MethodNode ctor = new MethodNode(Opcodes.ACC_PUBLIC, "<init>",
+                    "(L" + EVENT_BUS + ";)V", null, null);
+            ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            for (AbstractInsnNode push : superArgs) {
+                mn.instructions.remove(push);
+                ctor.instructions.add(push);
+            }
+            mn.instructions.remove(superCall);
+            ctor.instructions.add(superCall);
+            ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            ctor.instructions.add(new FieldInsnNode(Opcodes.PUTSTATIC,
+                    cn.name, MOD_BUS_FIELD, "L" + EVENT_BUS + ";"));
+            ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            ctor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                    cn.name, MOD_INIT_METHOD, "()V", false));
+            ctor.instructions.add(new InsnNode(Opcodes.RETURN));
+            ctor.maxStack = superArgs.size() + 2;
+            ctor.maxLocals = 2;
+            cn.methods.remove(mn);
+            cn.methods.add(ctor);
         }
-        // A plain no-arg constructor (game-bus-only mods) is also valid on NeoForge 1.21:
-        // only rewrite when the 1.20.1 mod-bus idiom is actually present.
+    }
+
+    private static boolean isPurePush(AbstractInsnNode n) {
+        if (n instanceof VarInsnNode v) return v.getOpcode() == Opcodes.ALOAD && v.var == 0;
+        if (n instanceof InsnNode) {
+            int op = n.getOpcode();
+            return (op >= Opcodes.ICONST_M1 && op <= Opcodes.DCONST_1) || op == Opcodes.ACONST_NULL;
+        }
+        if (n instanceof IntInsnNode ii) {
+            return ii.getOpcode() == Opcodes.BIPUSH || ii.getOpcode() == Opcodes.SIPUSH;
+        }
+        return n instanceof LdcInsnNode;
     }
 
     /**

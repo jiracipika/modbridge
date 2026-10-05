@@ -1,0 +1,17 @@
+  [PASS] server boots with zero mods
+  [PASS] clean server stop before next phase
+  [PASS] loader flags untranslated jar (skip warning)
+  [PASS] fixture did not initialize (no constructor line)
+  [PASS] clean server stop before next phase
+  [PASS] server boots with agent-translated mod
+  [PASS] agent detected and translated the source jar
+  [PASS] translated jar installed into mods/
+  [PASS] fixture constructor ran (original 1.20.1 bytecode path)
+  [PASS] command registration event fired
+  [PASS] fixtureping returns registered item id
+  [PASS] clean server stop before next phase
+  [PASS] server boots again with warm cache
+  [PASS] agent reused the hash cache (no re-translate)
+  [PASS] mod initialized on reboot
+  [PASS] clean final stop
+# Matrix re-run after phase-4 mixin refmap remap (2026-10-05, 16/16)

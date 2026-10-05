@@ -110,3 +110,97 @@ FML discovered and listed both mod containers before the mixin wall; nothing con
    capability API) — 2 mixin classes across the two mods; small, well-scoped.
 4. **JarJar/nested-jar policy** in the rewriter: drop-or-regenerate `META-INF/jarjar`,
    and skip nested jars that duplicate platform-provided libs (MixinExtras).
+
+---
+
+# Phase 4: mixin refmap remap + drift neutralization — DONE (2026-10-05, same day)
+
+The wall from this morning is gone. supplementaries + moonlight now sail through the
+entire mixin subsystem with **zero injection/apply errors**; both mod constructors run;
+the death moved from "mixin apply" to construction-time calls into **removed 1.20.1
+forge API** (shim territory — new data, precisely classified below).
+
+## What was built
+- **`Json` + `RefmapRemapper`** (rewriter/src, dependency-free, order-preserving): parses
+  `*-refmap.json`, remaps every key and value (SRG ids → mojmap, L-references, dotted
+  `@Mixin(targets)`, slash-form class values, field `name:Ldesc;` targets) with the SAME
+  tables the class pipeline uses, prunes neutralized mixins from `mappings`/`data`, and
+  strips them from the configs' server-side arrays. 32-check pure-logic unit test
+  (`RefmapRemapperTest`, `scripts/test-refmap-remapper.sh`).
+- **Mixin-class annotation string pass**: `method`/`target`/`targets` strings inside
+  `@Inject`/`@At`/`@Accessor`/`@Invoker`/`@Shadow`-family annotations are plain string
+  constants — remapped with the same rules (classes, descriptors, SRG ids, plus a new
+  tiny `mojmemberrenames.txt` for mojmap→mojmap renames SRG ids can't cover).
+- **Drift neutralization** (translation-time, class granularity): a mixin is dropped
+  (class removed, config entry removed, refmap entry dropped, drift reported to stdout)
+  when (a) its `@Mixin` target is absent from the 1.21.1 platform classlist
+  (`rules/classlist-1211.txt`, generated from the sandbox server's jars by
+  `scripts/gen-classlist-1211.sh`), (b) it eagerly references (super/interface/field/
+  method descriptors) a platform class that no longer exists, (c) an
+  `@Accessor`/`@Invoker` target member is absent from the 1.21.1 member inventory
+  (`rules/membertargets-1211.txt`, name+descriptor, via `MemberDump`), or (d) an
+  `@Shadow` member's name+descriptor is absent (descriptor drift is not mechanically
+  fixable — argument-level shims would be needed). `client`-array mixins are exempt
+  (never load on a dedicated server). Recoverable drift is RECOVERED instead:
+  `tryCatchFire→checkBurnOut` and `dispenserRegistry→DISPENSER_REGISTRY` renames keep
+  their mixins alive (FireBlockAccessor, DispenserBlockAccessor).
+- **Injector strictness downgrade**: `defaultRequire 1→0` in translated configs plus
+  `require=0` on every MixinExtras injector annotation (MixinExtras does not inherit
+  `defaultRequire`) — call-site drift discovered only at apply time (e.g. NeoForge
+  patched `PoiType.<init>` to stop calling `Set.copyOf`) now logs instead of killing boot.
+- **Nested jars dropped**: `META-INF/jars/` + `META-INF/jarjar/` (walls 1+2 from the
+  morning trial) — no more module-layer MixinExtras collision or JarJar ghost metadata.
+- **Frame-safe `@Mod` constructor rewrite**: the old in-place splice (insert `ALOAD 1`,
+  change the descriptor) silently shifted every local slot under the ctor's copied
+  stack frames — `MoonlightForge` died at class load with `ArrayIndexOutOfBounds` in
+  ASM's frame expander. The constructor body now MOVES verbatim into a synthetic
+  `mb$init()V` (identical local layout → frames stay valid), and the real
+  `<init>(IEventBus)V` becomes a short frame-free stub (super call, stash the bus in a
+  synthetic static `mb$bus`, delegate).
+- **Package/type rule fixes proven by a classlist audit**: `net/minecraftforge/fluids|items|client|server/` → the `neoforge` product root (the bare fallback silently
+  produced class paths that don't exist), and `ICondition`'s "crafting" segment drop.
+
+## Boot evidence (server-121, agent drop-in, trimmed excerpts in testenv/evidence/phase4-mixin-refmap-boot.txt)
+- fixture 16/16 matrix re-run AFTER all phase-4 changes (regression clean).
+- Boot: both jars translated at boot (moonlight 2.6s, supplementaries 10.2s);
+  FML **discovered and listed both containers**; **0** occurrences of
+  `InjectionError` / `injection failure` / `MixinApplyError` / `InvalidAccessorException`
+  / `@Mixin target ... was not found` (morning boot: fatal on the first).
+- `PoiMixin` (morning's killer) is a demonstrated success of the mechanism: its
+  `@WrapOperation` call site no longer exists in NeoForge's patched `PoiType` ctor —
+  handled by `require=0` fail-soft rather than a crash.
+- Both constructors ran; the death is now construction-time:
+
+| # | New wall (shim-level) | Signature |
+|---|----------------------|-----------|
+| 1 | Removed forge-era API in non-mixin code | `NoClassDefFoundError: net/neoforged/neoforge/common/ToolAction` in `SupplementariesForge` construction (1.21 removed `ToolAction`/`IPlantable`-era extension surface; needs an API facade, not a rename) |
+| 2 | fml-internal reflection rename | `ObfuscationReflectionHelper: NoSuchMethodException net.neoforged.fml.config.ModConfig.setConfigData(CommentedConfig)` in moonlight's config static-init (method moved/renamed in 21.1) |
+| 3 | (observed in audit, not yet hit at boot) | `FinishedRecipe`, `loot Serializer`, `SimpleChannel`/networking payload rework, capability-holder API (`Capability`/`LazyOptional`/`AttachCapabilitiesEvent`) — all removed-API surfaces referenced by translated non-mixin classes |
+
+## Failure taxonomy update
+- (a) found+fixed+re-proven this phase: package-rule product-root gaps (fluids/items/
+  client/server), ICondition path, `@Mod` ctor frame corruption, ASM node-mutation bug
+  (annotation values are [name,value,...] pairs — the first `mixinTargets` draft read
+  the pairs as key→value), LabelNode-transparent prefix scan, ASM `InsnList.remove`
+  link-nulling (must capture `next` before removals).
+- (b) shim-needed (the new (b)-set, all post-mixin): capability holder facade, networking
+  (SimpleChannel→payloads), ToolAction/IPlantable facade, config-reflection hook,
+  `FinishedRecipe`/loot-serializer datagen surfaces.
+- (c) unchanged: client-side SRG coverage (client mixins and client classes stay inert on
+  the dedicated server).
+
+## Caveats (honest)
+- `Done` was NOT reached: the server aborts during mod construction (walls 1–2 above).
+  The phase-4 goal was the mixin wall — it is fully beaten (0 mixin errors, both
+  constructors entered their bodies); everything after is (b).
+- `defaultRequire=0`/`require=0` trades hard failure for logged soft failure: a future
+  refmap remap bug would surface as a logged injection error, not a crash. The residual
+  SRG scan (0) plus the unit tests remain the correctness gate.
+- The member inventory is name+descriptor, declared-members-only: accessors targeting
+  inherited members could false-positive (none observed); same-name/different-desc
+  accessors would false-negative (also not observed).
+- The `@Mod` ctor rewrite handles the standard javac shape (pure-push super prefix,
+  `this(...)` chaining is not supported and falls back to no rewrite).
+- Rules files now carry generated platform inventories (classlist 8.4k classes,
+  membertargets 109k members / ~12.8MB) regenerated by script against the sandbox's
+  NeoForge install; they pin phase-4 drift checks to 1.21.1 server truth.

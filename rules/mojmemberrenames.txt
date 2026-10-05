@@ -1,0 +1,8 @@
+# 1.20.1 mojmap member name = 1.21.1 mojmap name (renames only; bare names).
+# SRG ids already absorb these for call sites (the SRG table maps to the new name),
+# but DEV-space names leak through where SRG ids never existed: @Accessor/@Invoker
+# method-name derivation and dev-name strings in mixin annotations/refmaps.
+# Hand-curated: every entry was proven by a failing mixin apply on the sandbox server.
+tryCatchFire=checkBurnOut
+# 1.21 constant-naming sweep: forge-era camelCase static became SCREAMING_SNAKE
+dispenserRegistry=DISPENSER_REGISTRY

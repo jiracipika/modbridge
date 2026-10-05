@@ -20,3 +20,7 @@ net/minecraftforge/event/entity/living/LivingDamageEvent	net/neoforged/neoforge/
 # 1.21 damage pipeline: LivingAttackEvent was replaced by LivingIncomingDamageEvent
 # (same getAmount, cancelable via ICancellableEvent — retarget rule below).
 net/minecraftforge/event/entity/living/LivingAttackEvent	net/neoforged/neoforge/event/entity/living/LivingIncomingDamageEvent
+# 1.21 crafting-condition consolidation: the "crafting" segment was dropped
+# (IConditionSerializer died in the codec rework — refs to it are left unmapped).
+net/minecraftforge/common/crafting/conditions/ICondition	net/neoforged/neoforge/common/conditions/ICondition
+net/minecraftforge/common/crafting/conditions/ICondition$	net/neoforged/neoforge/common/conditions/ICondition$

@@ -1,0 +1,79 @@
+# Phase 4 (mixin refmap remap) boot evidence — server-121, NeoForge 21.1.250, 2026-10-05
+# supplementaries-1.20-3.1.38 + moonlight-1.20-2.16.10, translated by the agent at boot.
+# Trimmed excerpts only; full console: testenv/console-server-121.log (not committed).
+
+== translation (agent, boot-time) ==
+[ModBridge] translating 3 jar(s) from /Volumes/ADATA/projects/modbridge/testenv/server-121/mods/source-1201 (NeoForge 1.21.1 target)
+[ModBridge] translating fixture-1.20.1.jar (sha 99756C67)...
+rules: 10 package, 9 type, 8 member, 1 desc, 48063 srg, 3 retarget, 8462 classlist, 2 mojrenames, 7694 member-targets classes
+mixin phase-4: refmaps remapped=0, mixin classes seen=0, neutralized=0, nested jars dropped=0
+[ModBridge] fixture-1.20.1.jar translated in 1036 ms
+[ModBridge] installed -> mods/fixture-1.20.1.jar
+[ModBridge] translating moonlight-1.20-2.16.10-forge.jar (sha E960CD6E)...
+rules: 10 package, 9 type, 8 member, 1 desc, 48063 srg, 3 retarget, 8462 classlist, 2 mojrenames, 7694 member-targets classes
+mixin config moonlight-common.mixins.json: dropped entry ItemMixin (neutralized)
+mixin config moonlight-common.mixins.json: dropped entry MapItemDataPacketMixin (neutralized)
+mixin config moonlight-common.mixins.json: defaultRequire 1 -> 0 (call-site drift fails soft, logged)
+mixin config moonlight.mixins.json: dropped entry PacketDistributorHackMixin (neutralized)
+mixin config moonlight.mixins.json: dropped entry SelfEntitySpawnDataMixin (neutralized)
+mixin config moonlight.mixins.json: dropped entry SelfItemDisplayTileMixin (neutralized)
+mixin config moonlight.mixins.json: defaultRequire 1 -> 0 (call-site drift fails soft, logged)
+mixin phase-4: refmaps remapped=2, mixin classes seen=50, neutralized=5, nested jars dropped=2
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/ItemMixin: @Shadow foodProperties Lnet/minecraft/world/food/FoodProperties; not present on net/minecraft/world/item/Item in 1.21.1 (name or descriptor drifted)
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/MapItemDataPacketMixin: @Shadow colorPatch Lnet/minecraft/world/level/saveddata/maps/MapItemSavedData$MapPatch; not present on net/minecraft/network/protocol/game/ClientboundMapItemDataPacket in 1.21.1 (name or descriptor drifted)
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/MapItemDataPacketMixin: @Shadow mapId I not present on net/minecraft/network/protocol/game/ClientboundMapItemDataPacket in 1.21.1 (name or descriptor drifted)
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/forge/PacketDistributorHackMixin: mixin target net/neoforged/network/PacketDistributor absent from 1.21.1 platform
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/forge/SelfEntitySpawnDataMixin: eagerly references net/neoforged/entity/IEntityAdditionalSpawnData absent from 1.21.1 platform
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/forge/SelfItemDisplayTileMixin: eagerly references net/neoforged/neoforge/common/util/LazyOptional absent from 1.21.1 platform
+neutralized mixin: net/mehvahdjukaar/moonlight/core/mixins/forge/SelfItemDisplayTileMixin: eagerly references net/neoforged/neoforge/common/capabilities/Capability absent from 1.21.1 platform
+[ModBridge] moonlight-1.20-2.16.10-forge.jar translated in 2586 ms
+[ModBridge] installed -> mods/moonlight-1.20-2.16.10-forge.jar
+[ModBridge] translating supplementaries-1.20-3.1.38.jar (sha 522B9FAA)...
+rules: 10 package, 9 type, 8 member, 1 desc, 48063 srg, 3 retarget, 8462 classlist, 2 mojrenames, 7694 member-targets classes
+mixin config supplementaries-common.mixins.json: dropped entry AbstractProjectileBehaviorAccessor (neutralized)
+mixin config supplementaries-common.mixins.json: dropped entry ExplorationMapFunctionMixin (neutralized)
+mixin config supplementaries-common.mixins.json: dropped entry ExplorationMapSerializerMixin (neutralized)
+mixin config supplementaries-common.mixins.json: dropped entry LivingEntityMixin (neutralized)
+mixin config supplementaries-common.mixins.json: defaultRequire 1 -> 0 (call-site drift fails soft, logged)
+mixin config supplementaries.mixins.json: dropped entry FriendlyByteBufMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry MobBucketItemAccessor (neutralized)
+mixin config supplementaries.mixins.json: dropped entry TreasureMapForEmeraldsMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry self.SelfDispenserMinecraftMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry self.SelfLunchBoxItemMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry self.SelfOpenableContainerMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry self.SelfPlanterMixin (neutralized)
+mixin config supplementaries.mixins.json: dropped entry self.SelfQuiverItemMixin (neutralized)
+
+== FML discovered both containers ==
+		Moonlight Library 1.20-2.16.10 (moonlight)
+		Supplementaries 1.20-3.1.38 (supplementaries) 
+	Failure message: Moonlight Library (moonlight) has failed to load correctly
+
+== ZERO mixin apply/injection errors this boot ==
+0
+(count of mixin wall signatures above — 0 = the phase-4 wall is gone)
+
+== the two constructors RAN (mb$init executes past registration setup) ==
+[17:39:05] [modloading-worker-0/ERROR] [ne.ne.fm.ja.FMLModContainer/LOADING]: Failed to create mod instance. ModID: supplementaries, class net.mehvahdjukaar.supplementaries.forge.SupplementariesForge
+[17:39:05] [modloading-worker-0/ERROR] [ne.ne.fm.ja.FMLModContainer/LOADING]: Failed to create mod instance. ModID: moonlight, class net.mehvahdjukaar.moonlight.forge.MoonlightForge
+
+== NEW WALL (shim-level, after mixins apply) 1: removed forge-era API class ==
+java.lang.NoClassDefFoundError: net/neoforged/neoforge/common/ToolAction
+Caused by: java.lang.ClassNotFoundException: net.neoforged.neoforge.common.ToolAction
+	Caused by 0: java.lang.NoClassDefFoundError: net/neoforged/neoforge/common/ToolAction
+		java.lang.NoClassDefFoundError: net/neoforged/neoforge/common/ToolAction
+	  java.lang.NoClassDefFoundError: net/neoforged/neoforge/common/ToolAction
+
+== NEW WALL (shim-level) 2: fml-internal reflection rename ==
+Caused by: net.neoforged.fml.util.ObfuscationReflectionHelper$UnableToFindMethodException: java.lang.NoSuchMethodException: net.neoforged.fml.config.ModConfig.setConfigData(com.electronwill.nightconfig.core.CommentedConfig)
+Caused by: java.lang.NoSuchMethodException: net.neoforged.fml.config.ModConfig.setConfigData(com.electronwill.nightconfig.core.CommentedConfig)
+	Caused by 1: net.neoforged.fml.util.ObfuscationReflectionHelper$UnableToFindMethodException: java.lang.NoSuchMethodException: net.neoforged.fml.config.ModConfig.setConfigData(com.electronwill.nightconfig.core.CommentedConfig)
+
+== unit test (scripts/test-refmap-remapper.sh) tail ==
+  [PASS] stripRefmapClasses: neutralized mixin entries dropped, others kept
+RefmapRemapperTest: 32 checks passed
+
+result: 3 passed, 0 failed
+
+== matrix re-run after phase-4 (fixture regression) ==
+16 passed, 0 failed (see testenv/evidence/matrix-run003-postfix.txt pattern; rerun in this session: 16/16)
