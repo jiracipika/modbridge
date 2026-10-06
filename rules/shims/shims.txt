@@ -8,6 +8,7 @@ com/modbridge/shim/EnchantmentCategory
 com/modbridge/shim/EnchantmentCompat
 com/modbridge/shim/GravelBlock
 com/modbridge/shim/IIngredientSerializer
+com/modbridge/shim/LivingTickEvent
 com/modbridge/shim/MessageHandler
 com/modbridge/shim/NetworkDirection
 com/modbridge/shim/NetworkEvent$Context

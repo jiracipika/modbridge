@@ -539,7 +539,11 @@ public final class CtorRetargetTest {
     void realMemberRetargetsLoad() throws IOException {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.memberRetargets.size() == 14, "rules/memberretargets.txt loads (3 setCanceled + 4 static-kind + 5 registry fields + getRegistryKey + register + PartialResult-era reserve)");
+        // count-independent: the file grows with every lane; assert the SENTINEL rules
+        check(r.memberRetargets.size() >= 14, "rules/memberretargets.txt loads (>=14 rules)");
+        check(r.memberRetargets.containsKey(
+                "net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|COMPONENT"),
+                "rules: ExtraCodecs.COMPONENT field retarget present");
         String[] val = r.memberRetargets.get(
                 "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow");
         check(val != null && val[0].equals("@SHIM@/DataResultCompat") && "static".equals(val[2]),

@@ -240,3 +240,11 @@ net/minecraft/world/item/DyeableLeatherItem	@SHIM@/DyeableLeatherItem
 # (forge POI holder map) + getValues (client-only lambdas) have no 21.1 counterpart:
 # runtime walls, documented, NOT ruled.
 net/minecraftforge/registries/IForgeRegistry	net/minecraft/core/Registry
+
+# --- event lane (phase 5.10, live-boot wall: LivingTickEvent CNFE at
+# getDeclaredMethods0 - supp ServerEventsForge.onLivingTick's handler signature).
+# No 21.1 living-tick event exists (tick restructure -> event.tick package). The
+# shim extends the real EntityTickEvent\$Post with covariant getEntity():LivingEntity
+# so the handler links + registers; FIRING is documented dead (bus dispatches
+# EntityTickEvent.Post, not IS-A the shim - no 21.1 event to hook).
+net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent	@SHIM@/LivingTickEvent

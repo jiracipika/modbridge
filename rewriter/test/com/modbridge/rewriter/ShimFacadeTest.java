@@ -652,7 +652,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 49, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient, RecordItem, IIngredientSerializer, GravelBlock, the 3 enchantment-lane shims, the 2 dyeable shims, RegistryCompat)");
+        check(r.shims.size() == 50, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient, RecordItem, IIngredientSerializer, GravelBlock, the 3 enchantment-lane shims, the 2 dyeable shims, RegistryCompat, LivingTickEvent)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -772,13 +772,16 @@ public final class ShimFacadeTest {
         check(r.remapType("net/minecraftforge/registries/IForgeRegistry")
                         .equals("net/minecraft/core/Registry"),
                 "rules: IForgeRegistry -> vanilla Registry interface");
+        check(r.remapType("net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent")
+                        .equals("com/modbridge/shim/testmod/LivingTickEvent"),
+                "rules: LivingTickEvent -> EntityTickEvent.Post-extending shim");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 49, "injectShims(): all 49 shims present under the per-mod package");
+        check(entries.size() == 50, "injectShims(): all 50 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),
