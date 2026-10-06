@@ -9,12 +9,14 @@ JDK=/Volumes/HARD/dev-cache/jdks/jdk-21.0.12+8/Contents/Home
 LIB="$MB/testenv/server-121/libraries"
 cd "$MB"
 
-# platform jars for ShimFacadeTest (compiles alongside)
+# platform jars for ShimFacadeTest (compiles alongside); loot-lane shims need Gson+DFU
 SRV=$(ls "$LIB"/net/minecraft/server/1.21.1-*/server-*-srg.jar)
 NJAR=$(ls "$LIB"/net/neoforged/neoforge/21.1.250/neoforge-21.1.250-universal.jar)
 BUS=$(ls "$LIB"/net/neoforged/bus/*/bus-*.jar)
 LOADER=$(ls "$LIB"/net/neoforged/fancymodloader/loader/*/loader-*.jar)
-PLATFORM_CP="$SRV:$NJAR:$BUS:$LOADER"
+GSON=$(ls "$LIB"/com/google/code/gson/gson/*/gson-*.jar | head -n 1)
+DFU=$(ls "$LIB"/com/mojang/datafixerupper/*/datafixerupper-*.jar | head -n 1)
+PLATFORM_CP="$SRV:$NJAR:$BUS:$LOADER:$GSON:$DFU"
 
 rm -rf build/ctortargettest
 mkdir -p build/ctortargettest

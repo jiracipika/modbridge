@@ -16,15 +16,24 @@ import net.neoforged.neoforge.common.util.LazyOptional;
 import net.neoforged.neoforge.common.util.NonNullConsumer;
 import net.neoforged.neoforge.common.util.NonNullSupplier;
 
+import net.minecraft.world.level.storage.loot.LootSerializer;
+import net.minecraft.world.level.storage.loot.entries.LootPoolEntryType;
+import net.minecraft.world.level.storage.loot.entries.LootPoolSingletonContainerSerializer;
+import net.minecraft.world.level.storage.loot.functions.LootItemConditionalFunctionSerializer;
+import net.minecraft.world.level.storage.loot.functions.LootItemFunctionType;
+import net.minecraft.world.level.storage.loot.predicates.LootItemConditionType;
+
 /**
- * Pure-logic tests for the phase-5 capability facade (scripts/test-shims.sh):
+ * Pure-logic tests for the phase-5 capability facade + the loot-lane serializer
+ * shims (scripts/test-shims.sh):
  * 1. shim runtime semantics (LazyOptional laziness/invalidation, CapabilityManager
  *    token identity, fail-soft reflection),
  * 2. DESCRIPTOR EXACTNESS — every shim member the translated mods call must exist
  *    with the exact erased descriptor the 1.20.1 production call sites carry after
- *    the type rules run (measured inventory: trial 002 phase 5),
- * 3. rules-level: the real rules/ retarget ToolAction->ItemAbility and load all
- *    shims; injectShims seeds an entry map without clobbering existing classes.
+ *    the type rules run (measured inventory: trial 002 phase 5 + the loot lane),
+ * 3. rules-level: the real rules/ retarget ToolAction->ItemAbility and map the
+ *    removed loot-Serializer world to the per-mod shims; load all shims;
+ *    injectShims seeds an entry map without clobbering existing classes.
  */
 public final class ShimFacadeTest {
 
@@ -45,6 +54,7 @@ public final class ShimFacadeTest {
     void run() throws Exception {
         runtimeSemantics();
         descriptorExactness();
+        lootShimExactness();
         rulesAndInjection();
     }
 
@@ -183,6 +193,51 @@ public final class ShimFacadeTest {
                 "AttachCapabilitiesEvent: extends the platform Event base");
     }
 
+    // ---------------------------------------------------------- loot-lane shims (phase 5.5 follow-up)
+
+    /**
+     * The loot lane's measured surface: 1.20.1's Gson loot Serializer world was
+     * removed wholesale in 1.21.1 (type holders became final MapCodec records).
+     * Translated implementers keep their compiled bridge shapes (m_6170_/m_7561_
+     * renamed to serialize/deserialize), the type-holder shims keep the 1.20.1
+     * ctor surface, and their codec() carries the ERASED 21.1 record accessor
+     * shape so vanilla's loot-JSON dispatch resolves against the shim values.
+     */
+    void lootShimExactness() throws Exception {
+        check(desc(LootSerializer.class, "serialize")
+                .equals("(Lcom/google/gson/JsonObject;Ljava/lang/Object;Lcom/google/gson/JsonSerializationContext;)V"),
+                "LootSerializer.serialize: erased (JsonObject,T,JsonSerializationContext)V (m_6170_ bridge shape)");
+        check(desc(LootSerializer.class, "deserialize")
+                .equals("(Lcom/google/gson/JsonObject;Lcom/google/gson/JsonDeserializationContext;)Ljava/lang/Object;"),
+                "LootSerializer.deserialize: erased (JsonObject,JsonDeserializationContext)Object (m_7561_ bridge shape)");
+
+        check(LootPoolSingletonContainerSerializer.class.isInterface() == false
+                && LootSerializer.class.isAssignableFrom(LootPoolSingletonContainerSerializer.class),
+                "LootPoolSingletonContainerSerializer: LootSerializer implementer (subclass stays assignable)");
+        check(LootPoolSingletonContainerSerializer.class.getTypeParameters()[0].getBounds()[0].getTypeName()
+                .equals("net.minecraft.world.level.storage.loot.entries.LootPoolSingletonContainer"),
+                "LootPoolSingletonContainerSerializer: <T extends LootPoolSingletonContainer> bound kept");
+        check(LootSerializer.class.isAssignableFrom(LootItemConditionalFunctionSerializer.class),
+                "LootItemConditionalFunctionSerializer: LootSerializer implementer (subclass stays assignable)");
+        check(LootItemConditionalFunctionSerializer.class.getTypeParameters()[0].getBounds()[0].getTypeName()
+                .equals("net.minecraft.world.level.storage.loot.functions.LootItemConditionalFunction"),
+                "LootItemConditionalFunctionSerializer: <T extends LootItemConditionalFunction> bound kept");
+
+        // the type-holder shims keep the 1.20.1 SerializerType ctor surface; classpath
+        // order puts build/shimtest first, so these must resolve to the SHIMS (the real
+        // 21.1 holders are final records with a MapCodec ctor) — guard that:
+        for (Class<?> holder : new Class<?>[] {LootItemConditionType.class, LootPoolEntryType.class,
+                LootItemFunctionType.class}) {
+            check(holder.getRecordComponents() == null, holder.getSimpleName() + ": shim loaded (not the 21.1 record)");
+            check(holder.getConstructor(LootSerializer.class).getParameterTypes()[0] == LootSerializer.class,
+                    holder.getSimpleName() + ".<init>(LootSerializer): 1.20.1 ctor surface");
+            check(desc(holder, "codec").equals("()Lcom/mojang/serialization/MapCodec;"),
+                    holder.getSimpleName() + ".codec(): erased 21.1 record accessor shape");
+            check(desc(holder, "getSerializer").equals("()Lnet/minecraft/world/level/storage/loot/LootSerializer;"),
+                    holder.getSimpleName() + ".getSerializer(): SerializerType accessor surface");
+        }
+    }
+
     static Method methodNamed(Class<?> c, String name, int paramCount) throws Exception {
         for (Method m : c.getDeclaredMethods()) {
             if (m.getName().equals(name) && m.getParameterCount() == paramCount) return m;
@@ -230,7 +285,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 15, "rules/shims: manifest loads 15 shim classes (incl. ForgeCapabilities tokens + FMLJavaModLoadingContext)");
+        check(r.shims.size() == 23, "rules/shims: manifest loads 23 shim classes (incl. ForgeCapabilities tokens + FMLJavaModLoadingContext + the 8 loot-lane classes)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -244,6 +299,28 @@ public final class ShimFacadeTest {
                 "rules: frame-array form [L...LazyOptional; remapped (phase-5 rewriter fix)");
         check(r.remapType("[Ljava/lang/String;").equals("[Ljava/lang/String;"),
                 "rules: frame-array form leaves primitives untouched");
+        // loot lane: the removed Gson serializer world resolves to the per-mod shims
+        check(r.remapType("net/minecraft/world/level/storage/loot/Serializer")
+                        .equals("com/modbridge/shim/testmod/LootSerializer"),
+                "rules: loot Serializer -> per-mod LootSerializer shim");
+        check(r.remapType("net/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Serializer")
+                        .equals("com/modbridge/shim/testmod/LootPoolSingletonContainerSerializer"),
+                "rules: LootPoolSingletonContainer$Serializer -> per-mod superclass shim");
+        check(r.remapType("net/minecraft/world/level/storage/loot/functions/LootItemConditionalFunction$Serializer")
+                        .equals("com/modbridge/shim/testmod/LootItemConditionalFunctionSerializer"),
+                "rules: LootItemConditionalFunction$Serializer -> per-mod superclass shim");
+        check(r.remapType("net/minecraft/world/level/storage/loot/predicates/LootItemConditionType")
+                        .equals("com/modbridge/shim/testmod/LootItemConditionType"),
+                "rules: LootItemConditionType -> per-mod type-holder shim");
+        check(r.remapType("net/minecraft/world/level/storage/loot/entries/LootPoolEntryType")
+                        .equals("com/modbridge/shim/testmod/LootPoolEntryType"),
+                "rules: LootPoolEntryType -> per-mod type-holder shim");
+        check(r.remapType("net/minecraft/world/level/storage/loot/functions/LootItemFunctionType")
+                        .equals("com/modbridge/shim/testmod/LootItemFunctionType"),
+                "rules: LootItemFunctionType -> per-mod type-holder shim");
+        check(r.remapDesc("(Lnet/minecraft/world/level/storage/loot/Serializer;)V")
+                        .equals("(Lcom/modbridge/shim/testmod/LootSerializer;)V"),
+                "rules: loot ctor desc remap (implementers keep the erased bridge shapes)");
         check(r.memberRenames.containsKey("net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction"),
                 "rules: getToolAction=getItemAbility memberrename present");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
@@ -252,7 +329,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 15, "injectShims(): all 15 shims present under the per-mod package");
+        check(entries.size() == 23, "injectShims(): all 23 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

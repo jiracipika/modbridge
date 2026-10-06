@@ -62,3 +62,31 @@ net/minecraftforge/common/capabilities/RegisterCapabilitiesEvent	@SHIM@/Register
 net/minecraftforge/event/RegisterCapabilitiesEvent	@SHIM@/RegisterCapabilitiesEvent
 # 1.21 renamed the deferred spawn egg item; ctor shape identical (Supplier,int,int,Properties).
 net/minecraftforge/common/ForgeSpawnEggItem	net/neoforged/neoforge/common/DeferredSpawnEggItem
+# --- loot lane (phase 5.5 follow-up): 1.21.1 removed the Gson loot-Serializer world
+# entirely (javap-verified against server-1.21.1-srg.jar: no
+# net/minecraft/world/level/storage/loot/Serializer, no
+# entries/LootPoolSingletonContainer$Serializer or
+# functions/LootItemConditionalFunction$Serializer superclasses, and the three loot
+# type holders are now final records over a MapCodec). Measured surface across
+# moonlight 2.16.10 + supplementaries 3.1.38: 6 serializer implementer classes (4
+# moonlight, 2 supplementaries; the SRG bridges m_6170_/m_7561_ rename to
+# serialize/deserialize, which the shim interface declares), 6 type-holder ctor call
+# sites (3x LootItemConditionType + 1x LootPoolEntryType in moonlight, 2x
+# LootItemFunctionType in supplementaries), registrations through
+# moonlight's RegHelper -> DeferredRegister into the REAL 21.1 loot registries.
+#
+# The type holders are SHIMMED (not ctor-retargeted) because every measured ctor
+# site nests a `new SomeSerializer()` inside the ctor args, which the ctor-retarget
+# pass conservatively leaves untouched (its forward scan stops at any TypeInsnNode)
+# — and shimming the holder keeps the value shape the mods' own getType()/checkcast
+# sites expect. Shim holders land in the real registries (erasure: no value class
+# check in DeferredRegister/RegisterEvent/Registry.register), so boot proceeds;
+# their codec() returns an inert MapCodec so vanilla's loot-JSON dispatch fails
+# LOUDLY per table instead of crashing. Loot serialization RUNTIME is explicitly
+# not claimed (same acceptance as the inert capability events).
+net/minecraft/world/level/storage/loot/Serializer	@SHIM@/LootSerializer
+net/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Serializer	@SHIM@/LootPoolSingletonContainerSerializer
+net/minecraft/world/level/storage/loot/functions/LootItemConditionalFunction$Serializer	@SHIM@/LootItemConditionalFunctionSerializer
+net/minecraft/world/level/storage/loot/predicates/LootItemConditionType	@SHIM@/LootItemConditionType
+net/minecraft/world/level/storage/loot/entries/LootPoolEntryType	@SHIM@/LootPoolEntryType
+net/minecraft/world/level/storage/loot/functions/LootItemFunctionType	@SHIM@/LootItemFunctionType

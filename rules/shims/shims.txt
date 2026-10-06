@@ -1,4 +1,12 @@
 com/modbridge/shim/ObfuscationReflectionHelper
+net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
+net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec
+net/minecraft/world/level/storage/loot/LootSerializer
+net/minecraft/world/level/storage/loot/entries/LootPoolEntryType
+net/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainerSerializer
+net/minecraft/world/level/storage/loot/functions/LootItemConditionalFunctionSerializer
+net/minecraft/world/level/storage/loot/functions/LootItemFunctionType
+net/minecraft/world/level/storage/loot/predicates/LootItemConditionType
 net/neoforged/fml/config/ConfigFileTypeHandler
 net/neoforged/fml/javafmlmod/FMLJavaModLoadingContext
 net/neoforged/neoforge/common/capabilities/Capability

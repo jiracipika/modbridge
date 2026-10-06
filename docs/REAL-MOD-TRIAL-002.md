@@ -464,3 +464,132 @@ Final walls — the next (b)-layer, both in the mods' own commonInit:
 - The two new walls are (b)-layer: both need semantic bridges (codec adapters /
   eager-load design), not mechanical rules. They are the scoped opener for the next
   slice, ahead of networking (SimpleChannel) and the remaining datagen surfaces.
+
+# Phase 5.6: the loot Serializer wall falls — shimmed type holders land in the real 21.1 loot registries (2026-10-05, loot slice)
+
+The phase-5.5 handoff's first next wall — `NoClassDefFoundError:
+net/minecraft/world/level/storage/loot/Serializer` at moonlight commonInit:75 — is
+gone by rule + shim alone: zero Rewriter.java changes. Both mods translate clean and
+every previously-failing loot class now references only classes that exist.
+
+## The measured 1.20.1 surface (javap, both raw jars)
+
+- **Interface refs (6 classes):** moonlight `MoonlightRegistry`, `ModLootConditions`
+  (+2 inner `ConditionSerializer` records, +`OptionalPropertyCondition$ConditionSerializer`),
+  supplementaries `ModRegistry`.
+- **Implementers (6 classes):** 4 moonlight (`OptionalPropertyCondition$ConditionSerializer`
+  implements `Serializer<T>` directly; the 2 `ModLootConditions` serializer records;
+  `OptionalItemPool$Serializer extends LootPoolSingletonContainer$Serializer`) and
+  2 supplementaries (`RandomArrowFunction$Serializer` / `CurseLootFunction$Serializer`
+  extend `LootItemConditionalFunction$Serializer`). Members are the classic Gson
+  pair `serialize(JsonObject,T,JsonSerializationContext)` / `deserialize(...)`
+  carried by SRG bridges `m_6170_`/`m_7561_` (→ `serialize`/`deserialize` after the
+  SRG-declaration rename the rewriter already does).
+- **Type-holder ctor sites (6):** `new LootItemConditionType(serializer)` ×3
+  (MoonlightRegistry 1, ModLootConditions 2), `new LootPoolEntryType(serializer)` ×1
+  (MoonlightRegistry), `new LootItemFunctionType(serializer)` ×2 (supp ModRegistry).
+  All 6 nest a `new SomeSerializer()` INSIDE the ctor args — the exact shape the
+  ctor-retarget pass conservatively refuses (its forward scan stops at any
+  TypeInsnNode), which ruled the ctor-retarget mechanism out.
+- **Registration:** everything flows through moonlight's `RegHelper.register` →
+  `DeferredRegister.create(ResourceKey, modid)` into the REAL registries
+  (`Registries.LOOT_CONDITION_TYPE` / `LOOT_POOL_ENTRY_TYPE` / `LOOT_FUNCTION_TYPE`
+  — all three still exist on 21.1). supplementaries' GLM codecs ride
+  `DeferredRegister` on `GLOBAL_LOOT_MODIFIER_SERIALIZERS` (21.1 value type is
+  `MapCodec<? extends IGlobalLootModifier>`; the mods supply `Codec` — erased at
+  runtime, loads fine, and `LootModifier`'s base-class surface is byte-identical
+  across the fork: protected `(LootItemCondition[])` ctor + final `apply` +
+  abstract `doApply`).
+- **Everything else in the loot namespace already exists on 21.1** — a
+  referenced-class inventory of both raw jars against the 1.21.1 server jar found
+  exactly THREE absent classes: `loot/Serializer`,
+  `entries/LootPoolSingletonContainer$Serializer`,
+  `functions/LootItemConditionalFunction$Serializer` (plus the three type holders,
+  which exist but changed SHAPE to final `MapCodec` records).
+
+## The approach: shim the interface, the two superclasses, AND the three type holders
+
+Option (a) — working Gson↔DFU codec adapters per implementer — is a per-implementer
+semantic rebuild (JsonDeserializationContext plumbing, registry-backed sub-parsers)
+whose only payoff is loot-JSON PARSING, a runtime surface no boot ever touches.
+Option (c) (neutralization) is unmeasurable-by-design here since registration is
+required for the mod's own `getType()` sites. So: the precedent-backed (b), with one
+twist — the type holders themselves are shimmed instead of ctor-retargeted:
+
+- `@SHIM@/LootSerializer` — the 1.20.1 `Serializer<T>` surface with the mojmap
+  member names, so the translated implementers' renamed bridges
+  (`serialize(JsonObject,Object,...)` / `deserialize(JsonObject,...):Object`) make
+  them TRUE implementers again.
+- `@SHIM@/LootPoolSingletonContainerSerializer` /
+  `@SHIM@/LootItemConditionalFunctionSerializer` — superclass-chain carriers
+  (implement LootSerializer; members deliberately NOT re-declared: the translated
+  subclasses keep them as plain methods nothing dispatches through).
+- `@SHIM@/LootItemConditionType` / `@SHIM@/LootPoolEntryType` /
+  `@SHIM@/LootItemFunctionType` — 1.20.1 construction surface
+  (`<init>(LootSerializer)` + `getSerializer()`), PLUS the erased 21.1 record
+  accessor `codec(): ()Lcom/mojang/serialization/MapCodec;` returning an inert
+  erroring MapCodec (fail-loud, per-table, at loot-JSON parse time).
+
+Why shimming the holders works: the shim VALUES land in the REAL 21.1 registries
+(erasure — no value class check anywhere in DeferredRegister/RegisterEvent/
+Registry.register), the mods' own `getType()`/checkcast sites stay self-consistent
+(they see the shim type everywhere after the blanket rename), and vanilla's
+loot-JSON dispatch — the only code that reads registry values — resolves
+`codec()` against the erased record shape and gets a loud per-table failure instead
+of a foreign-object ClassCastException. Boot proceeds; loot serialization runtime is
+explicitly not claimed (same acceptance as the inert capability events).
+
+## Offline proofs (this slice ran NO server)
+
+`bash scripts/translate.sh` on both raw jars; a 9-check proof script over the
+outputs (per-class ASM ref inventory vs the full 21.1 platform universe — srg server
+jar + neoforge universal + loader + bus — plus each jar's own classes + injected
+shims): baseline/raw jars reference all 6 removed names (the wall) → translated jars
+have ZERO references to them; the 15 previously-failing loot classes are present and
+reference only existing classes; moonlight's unresolved-ref set gained NOTHING vs
+the phase-5.5 baseline translation (the known pre-existing non-loot remainder —
+client-side classes, networking/SimpleChannel, datagen FinishedRecipe,
+IIngredientSerializer/IConditionSerializer, and absent other-mod soft-refs — is
+unchanged); 8 loot-lane shim classes injected per mod. Bytecode spot-checks:
+`lambda$static$0/2` now construct `com/modbridge/shim/<modid>/LootItemConditionType`
+/ `.../LootItemFunctionType` with `.../LootSerializer`; the implementers implement
+the shim interface with renamed bridges; `OptionalItemPool$Serializer` extends the
+shim superclass.
+
+Gates: `scripts/test-shims.sh` 3/3 (ShimFacadeTest 88 checks, shim manifest
+15→23; loot descriptors: erased bridge shapes, 1.20.1 ctor surface, erased 21.1
+`codec()` shape, generic bounds, shim-vs-record classpath guard), ctor-retarget
+3/3, refmap 3/3, srg-resolver 4/4, fixture sanity (`ctor retargets=0`,
+`method drops=0` — the new rules are inert outside the loot surface).
+
+## Caveats (honest)
+
+- Loot JSON SERIALIZATION of translated conditions/functions/entries is dead by
+  design: any loot table actually referencing `moonlight:optional_item`,
+  `moonlight:iconditions`, `supplementaries:curse_loot`, etc. logs a ModBridge-named
+  parse failure for that table (loader continues). Making those WORK is the real
+  (a)-ladder bridge (Gson serializer → MapCodec adapter), deferred until a boot
+  proves it matters.
+- The registry values are shim objects: any OTHER 1.21.1-side consumer that
+  hard-casts `Registries.LOOT_*` values to the real records (none in vanilla's
+  dispatch path, which reads `codec()` erased) would CCE. Measured consumers in the
+  two mods read nothing.
+- supplementaries' `ExplorationMapSerializerMixin` (target
+  `ExplorationMapFunction$Serializer`) is neutralized by the existing phase-4
+  machinery — its behavior (explorer-map structure tweak) rides the removed
+  superclass and is not claimed.
+- Expected next walls (pre-existing, unchanged by this slice, in fight order):
+  1. `AbstractCriterionTriggerInstance` — moonlight `GrindItemTrigger` extends the
+     21.1-present `SimpleCriterionTrigger` (clinit registration is safe), but its
+     `Instance` inner class extends the 1.20.1 `AbstractCriterionTriggerInstance`,
+     which 1.21.1 folded into `SimpleCriterionTrigger$SimpleInstance` — dies when
+     the Instance is first constructed (advancement listener registration, world
+     play), not at boot.
+  2. eager config reads (`Cannot get config value before config is loaded`) —
+     the phase-5.5 wall, untouched here (config lane).
+  3. networking (`net/neoforged/network/simple/SimpleChannel` — the bare
+     forge→neoforged package fallback dropped the `/neoforge/` segment; 21.1 lives
+     at `net/neoforged/neoforge/network/...`) and `FinishedRecipe` datagen.
+  4. moonlight `IIngredientSerializer` (BlockTypeSwapIngredientImpl) +
+     `IConditionSerializer` (RegHelperImpl/OptionalRecipeCondition) — same
+     serializer-to-codec semantic family as this wall.

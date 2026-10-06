@@ -15,10 +15,15 @@ SRV=$(ls "$LIB"/net/minecraft/server/1.21.1-*/server-*-srg.jar)
 NJAR=$(ls "$LIB"/net/neoforged/neoforge/21.1.250/neoforge-21.1.250-universal.jar)
 BUS=$(ls "$LIB"/net/neoforged/bus/*/bus-*.jar)
 LOADER=$(ls "$LIB"/net/neoforged/fancymodloader/loader/*/loader-*.jar)
+# loot lane: the loot-serializer shims reference the Gson interface shapes the
+# translated implementers carry, and the type-holder shims build DFU MapCodecs.
+# lexicographic head picks gson 2.10.1 over 2.8.9 (both in the sandbox libraries).
+GSON=$(ls "$LIB"/com/google/code/gson/gson/*/gson-*.jar | head -n 1)
+DFU=$(ls "$LIB"/com/mojang/datafixerupper/*/datafixerupper-*.jar | head -n 1)
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
-"$JDK/bin/javac" --release 17 -cp "$SRV:$NJAR:$BUS:$LOADER" -d "$OUT" $(find "$MB/shims/src" -name '*.java')
+"$JDK/bin/javac" --release 17 -cp "$SRV:$NJAR:$BUS:$LOADER:$GSON:$DFU" -d "$OUT" $(find "$MB/shims/src" -name '*.java')
 
 # list EVERY class file, including anonymous inner classes (ForgeCapabilities$1/$2):
 # the rewriter injects and relocates exactly this list, so a holder without its
