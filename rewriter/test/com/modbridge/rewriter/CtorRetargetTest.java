@@ -356,11 +356,12 @@ public final class CtorRetargetTest {
         r.loadRules(Path.of("rules"));
         r.initShimRoot("testmod");
         ClassNode cn = dataResultHost();
+        r.remapClass(cn);            // production order: type renames run first
         r.applyMemberRenames(cn);
         String shimOwner = "com/modbridge/shim/testmod/DataResultCompat";
         MethodInsnNode got = first(cn.methods.get(0), MethodInsnNode.class,
                 m -> "getOrThrow".equals(m.name));
-        check(r.memberRenamesApplied == 3, "all three drifted shapes retargeted (counter=3)");
+        check(r.memberRenamesApplied == 2, "both drifted shapes retargeted (counter=2)");
         check(got != null && got.getOpcode() == Opcodes.INVOKESTATIC,
                 "getOrThrow(Z,Consumer) site became INVOKESTATIC");
         check(got.owner.equals(shimOwner), "getOrThrow owner = per-mod DataResultCompat");
@@ -373,13 +374,32 @@ public final class CtorRetargetTest {
                 "get() site became INVOKESTATIC on the shim");
         check(get.desc.equals("(Lcom/mojang/serialization/DataResult;)Lcom/mojang/datafixers/util/Either;"),
                 "get() desc = receiver-prepended, erased Either return");
+        // the third shape (PartialResult.message) is a TYPERENAME, not a memberretarget:
+        // remapClass renamed the owner before memberretargets ever see it; the Error
+        // record accessor is byte-compatible (same name + erased desc)
         MethodInsnNode msg = first(cn.methods.get(2), MethodInsnNode.class,
                 m -> "message".equals(m.name));
-        check(msg != null && msg.getOpcode() == Opcodes.INVOKEVIRTUAL
-                        && msg.owner.equals("com/mojang/serialization/DataResult$Error"),
-                "PartialResult.message owner-retargeted to the Error record");
-        check(msg.desc.equals("()Ljava/lang/String;") && !msg.itf,
+        check(msg != null && msg.owner.equals("com/mojang/serialization/DataResult$Error"),
+                "PartialResult.message owner renamed to the Error record by remapClass");
+        check(msg.desc.equals("()Ljava/lang/String;") && !msg.itf
+                        && msg.getOpcode() == Opcodes.INVOKEVIRTUAL,
                 "message keeps its erased desc and virtual kind");
+        check(!cn.methods.get(2).desc.contains("PartialResult"),
+                "host method desc carries no PartialResult after remapClass");
+        // InnerClasses entries: the simple name follows the renamed internal name
+        ClassNode innerHost = new ClassNode();
+        innerHost.name = "test/InnerHost";
+        innerHost.version = Opcodes.V17;
+        innerHost.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        innerHost.superName = "java/lang/Object";
+        innerHost.innerClasses = new java.util.ArrayList<>();
+        innerHost.innerClasses.add(new org.objectweb.asm.tree.InnerClassNode(
+                "com/mojang/serialization/DataResult$PartialResult",
+                "com/mojang/serialization/DataResult", "PartialResult", 0));
+        r.remapClass(innerHost);
+        check(innerHost.innerClasses.get(0).name.endsWith("$Error")
+                        && "Error".equals(innerHost.innerClasses.get(0).innerName),
+                "InnerClasses simple name follows the renamed internal name");
         // shim manifest must carry the adapter (injected per-jar, relocated)
         check(r.shims.containsKey("com/modbridge/shim/DataResultCompat"),
                 "DataResultCompat present in the shim manifest");
@@ -410,11 +430,11 @@ public final class CtorRetargetTest {
                 "no-arg getOrThrow stays a DataResult virtual (21.1 default member)");
     }
 
-    /** the shipped memberretargets.txt must parse and hold the three new shapes */
+    /** the shipped memberretargets.txt must parse and hold the two static shapes */
     void realMemberRetargetsLoad() throws IOException {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.memberRetargets.size() == 6, "rules/memberretargets.txt loads (3 setCanceled + 3 DFU drift)");
+        check(r.memberRetargets.size() == 5, "rules/memberretargets.txt loads (3 setCanceled + 2 DFU static drift)");
         String[] val = r.memberRetargets.get(
                 "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow");
         check(val != null && val[0].equals("@SHIM@/DataResultCompat") && "static".equals(val[2]),
@@ -422,9 +442,10 @@ public final class CtorRetargetTest {
         check(r.memberRetargets.containsKey(
                 "com/mojang/serialization/DataResult|()Lcom/mojang/datafixers/util/Either;|get"),
                 "static-kind get() rule present");
-        check(r.memberRetargets.containsKey(
-                "com/mojang/serialization/DataResult$PartialResult|()Ljava/lang/String;|message"),
-                "PartialResult.message owner-retarget rule present");
+        // the third shape rides the typerename, not a memberretarget rule
+        check(r.remapType("com/mojang/serialization/DataResult$PartialResult")
+                        .equals("com/mojang/serialization/DataResult$Error"),
+                "PartialResult -> Error typerename present (desc/link-level drift)");
     }
 
     /** rules/methoddrops.txt must parse and hold the two ConfigSpecWrapper drops */

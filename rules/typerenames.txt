@@ -127,3 +127,19 @@ net/minecraftforge/common/crafting/CraftingHelper	@SHIM@/CraftingHelper
 # (ItemPredicate.matches -> test) are deliberately not carried: advancement-criteria
 # RUNTIME is not claimed (same acceptance as the loot/condition-lane shims).
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance	@SHIM@/AbstractCriterionTriggerInstance
+
+# --- DFU 6 -> 8, config lane round-3 follow-up (phase 5.9): DataResult$PartialResult
+# is GONE on datafixerupper 8 - the record DataResult$Error replaced it. For the
+# measured member surface it is a drop-in: message(), map(Function),
+# flatMap(Function), equals/hashCode/toString all exist on Error with identical
+# erased descriptors. The reference positions are NOT instruction-only: moonlight's
+# ConfigHelper$ConfigObject.lambda$getReparsedObject$1 carries PartialResult in its
+# erased method DESCRIPTOR + local-variable table (and the ConfigHelper$TomlConfigOps
+# signature attribute), and linking resolves descriptors -> live-boot
+# ClassNotFoundException (surfaced transitively through supplementaries'
+# construction, which links moonlight's ConfigHelper). remapInsns covers every
+# position: instruction owners, method/field descs, the lambda's invokedynamic
+# desc + bootstrap MethodType/Handle args, frames, signatures, local variables.
+# SUPERSEDES this slice's memberretarget message() rule (its key owner is renamed
+# before memberretargets run, so that rule can no longer fire - removed).
+com/mojang/serialization/DataResult$PartialResult	com/mojang/serialization/DataResult$Error

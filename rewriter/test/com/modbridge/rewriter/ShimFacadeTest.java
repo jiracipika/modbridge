@@ -554,9 +554,9 @@ public final class ShimFacadeTest {
                         "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow")[2]
                         .equals("static"),
                 "rules: DataResult.getOrThrow(Z,Consumer) carries the static kind");
-        check(r.memberRetargets.containsKey(
-                        "com/mojang/serialization/DataResult$PartialResult|()Ljava/lang/String;|message"),
-                "rules: PartialResult.message -> Error.message owner-retarget present");
+        check(r.remapType("com/mojang/serialization/DataResult$PartialResult")
+                        .equals("com/mojang/serialization/DataResult$Error"),
+                "rules: PartialResult -> Error typerename (the desc/link-level drift shape)");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 

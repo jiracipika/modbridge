@@ -1671,7 +1671,13 @@ public class Rewriter {
         if (cn.signature != null) cn.signature = remapDesc(cn.signature);
         if (cn.innerClasses != null) {
             for (InnerClassNode ic : cn.innerClasses) {
-                if (ic.name != null) ic.name = remapType(ic.name);
+                if (ic.name != null) {
+                    ic.name = remapType(ic.name);
+                    // the entry's simple name must follow the renamed internal name
+                    // (reflection-level: e.g. DFU 6->8 DataResult$PartialResult ->
+                    // $Error left a stale "PartialResult" inner name behind)
+                    if (ic.innerName != null) ic.innerName = ic.name.substring(ic.name.lastIndexOf('$') + 1);
+                }
                 if (ic.outerName != null) ic.outerName = remapType(ic.outerName);
             }
         }
