@@ -1,0 +1,9 @@
+# class|oldSuper -> newSuper
+# SUPER-SWAP (phase 5.10): retargets a translated class's SUPERCLASS only when the
+# current (type-remapped) superName equals oldSuper — never guessed, never applied
+# elsewhere. Use case: subclasses of a platform class that became FINAL on 21.1
+# (the data-driven enchantment rework made Enchantment final; a code subclass
+# cannot even DEFINE - ICCE at defineClass). The shim super takes the slot so the
+# class defines and the instance floats through erased registration paths;
+# behavior of the reworked subsystem is NOT claimed.
+net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment|net/minecraft/world/item/enchantment/Enchantment -> @SHIM@/EnchantmentCompat

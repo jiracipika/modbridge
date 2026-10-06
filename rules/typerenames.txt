@@ -216,3 +216,11 @@ net/minecraftforge/common/crafting/IIngredientSerializer	@SHIM@/IIngredientSeria
 # REAL 21.1 FallingBlock (same ctor shape survives); implements the 21.1-added
 # abstract codec() inertly. Block serialization of raked gravel NOT claimed.
 net/minecraft/world/level/block/GravelBlock	@SHIM@/GravelBlock
+
+# --- enchantment lane (phase 5.10, post-GravelBlock boot wall): Enchantment went
+# FINAL on 21.1 (data-driven rework) - StasisEnchantment cannot even DEFINE. The
+# SUPER-SWAP (rules/superswaps.txt) takes its superclass slot; these two support
+# types exist only inside its ctor and ride their own shims (single measured use
+# each: GETSTATIC VERY_RARE / GETSTATIC CROSSBOW).
+net/minecraft/world/item/enchantment/Enchantment$Rarity	@SHIM@/Enchantment$Rarity
+net/minecraft/world/item/enchantment/EnchantmentCategory	@SHIM@/EnchantmentCategory

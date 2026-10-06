@@ -77,6 +77,7 @@ public final class CtorRetargetTest {
         realMethodDropsLoad();
         interfaceCallSites();
         interfaceInventoryMissingFileTolerated();
+        superSwapMechanism();
     }
 
     Rewriter rewriterWithRule() throws IOException {
@@ -449,6 +450,35 @@ public final class CtorRetargetTest {
         check(iv != null && iv.getOpcode() == Opcodes.INVOKEVIRTUAL
                         && iv.owner.equals("com/mojang/serialization/DataResult"),
                 "no-arg getOrThrow stays a DataResult virtual (21.1 default member)");
+    }
+
+    // ------------------------------------------- superswap pass (enchantment lane)
+
+    void superSwapMechanism() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addSuperSwapRules(List.of(
+                "test/Sub|test/old/Super -> @SHIM@/NewSuper",
+                "test/Guarded|test/other/Super -> test/never/Applied"));
+        r.initShimRoot("testmod");
+        // NOTE: @SHIM@ resolution needs the shim manifest - add the name
+        r.shims.put("com/modbridge/shim/NewSuper", new byte[0]);
+        check(applySuperSwapIn(r, "test/Sub", "test/old/Super").equals("com/modbridge/shim/testmod/NewSuper"),
+                "superswap applied when the current super matches the rule's old super");
+        check(applySuperSwapIn(r, "test/Sub", "test/other/Super").equals("test/other/Super"),
+                "superswap NOT applied when the current super differs (never guessed)");
+        check(applySuperSwapIn(r, "test/Guarded", "test/old/Super").equals("test/old/Super"),
+                "superswap NOT applied for unmatched classes");
+        check(r.superswapsApplied == 1, "superswap counter = 1");
+        // shipped rule file parses + guards
+        Rewriter rs = new Rewriter();
+        rs.loadRules(Path.of("rules"));
+        check(rs.superSwaps.size() == 1
+                        && rs.superSwaps.containsKey("net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment"),
+                "rules/superswaps.txt parses (1 guarded rule)");
+    }
+
+    String applySuperSwapIn(Rewriter r, String className, String superName) {
+        return r.applySuperSwap(className, superName);
     }
 
     /** the shipped memberretargets.txt must parse and hold the two static shapes */

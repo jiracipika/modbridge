@@ -138,6 +138,9 @@ public class Rewriter {
     /** interface call-site repairs (Methodref -> InterfaceMethodref kind fixes +
      *  invokevirtual-on-interface -> invokeinterface). See interfaces1211. */
     int interfaceRepairsApplied;
+    /** class -> {oldSuper, newSuper}: superclass swaps, guarded on the current super */
+    final Map<String, String[]> superSwaps = new HashMap<>();
+    int superswapsApplied;
     /** 1.21.1 platform class universe (internal names): minecraft server + neoforge
      *  libraries. Optional — when absent, only leftover forge refs count as drift. */
     final Set<String> classlist = new HashSet<>();
@@ -198,6 +201,7 @@ public class Rewriter {
         addRetargetRules(readLines(rulesDir.resolve("memberretargets.txt")));
         addCtorRetargetRules(readLines(rulesDir.resolve("ctorretargets.txt")));
         addMethodDrops(readLines(rulesDir.resolve("methoddrops.txt")));
+        addSuperSwapRules(readLinesOptional(rulesDir.resolve("superswaps.txt")));
         addClasslist(readLines(rulesDir.resolve("classlist-1211.txt")));
         addInterfaceInventory(readLines(rulesDir.resolve("interfaces-1211.txt")));
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
@@ -216,6 +220,7 @@ public class Rewriter {
         addRetargetRules(resourceLines("/rules/memberretargets.txt"));
         addCtorRetargetRules(resourceLines("/rules/ctorretargets.txt"));
         addMethodDrops(resourceLinesOptional("/rules/methoddrops.txt"));
+        addSuperSwapRules(resourceLinesOptional("/rules/superswaps.txt"));
         addClasslist(resourceLinesOptional("/rules/classlist-1211.txt"));
         addInterfaceInventory(resourceLinesOptional("/rules/interfaces-1211.txt"));
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
@@ -231,10 +236,11 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
-                ctorRetargets.size(), methodDrops.size(), classlist.size(), interfaces1211.size(),
+                ctorRetargets.size(), methodDrops.size(), superSwaps.size(), classlist.size(),
+                interfaces1211.size(),
                 mojMemberRenames.size(), memberTargets.size(), shims.size());
     }
 
@@ -282,6 +288,17 @@ public class Rewriter {
     void initShimRoot(String modId) {
         String id = (modId == null || modId.isBlank()) ? "unknown" : modId.replaceAll("[^A-Za-z0-9_$]", "_");
         shimRoot = "com/modbridge/shim/" + id;
+    }
+
+    /** SUPER-SWAP: replaces a class's superclass only when it still equals the
+     *  rule's old super (e.g. a subclass of a platform class that became FINAL on
+     *  21.1 - the data-driven enchantment rework - retargeted to an inert carrier;
+     *  nothing else can restore the IS-A chain). */
+    String applySuperSwap(String className, String superName) {
+        String[] swap = superSwaps.get(className);
+        if (swap == null || !swap[0].equals(superName)) return superName;
+        superswapsApplied++;
+        return resolveShimTarget(swap[1]);
     }
 
     /** resolves the "@SHIM@/<SimpleName>" placeholder used in typerenames targets */
@@ -505,6 +522,19 @@ public class Rewriter {
         }
     }
 
+    /** class|oldSuper -> newSuper; applied only when the remapped superName still
+     *  equals oldSuper (never guessed). Optional file - absent = no swaps. */
+    void addSuperSwapRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#")) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad superswap line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            if (key.length != 2) throw new IOException("bad superswap line: " + line);
+            superSwaps.put(key[0].trim(), new String[]{key[1].trim(), sides[1].trim()});
+        }
+    }
+
     /** owner|desc|name of methods whose whole body is replaced by a typed return */
     void addMethodDrops(List<String> lines) throws IOException {
         for (String line : lines) {
@@ -562,6 +592,12 @@ public class Rewriter {
             if (key.length != 3) throw new IOException("bad memberdescrename line: " + line);
             memberDescRenames.put(key[0] + "|" + key[1] + "|" + key[2], parts[1].trim());
         }
+    }
+
+    /** CLI variant that tolerates a missing optional rule file (empty list). */
+    private List<String> readLinesOptional(java.nio.file.Path file) throws IOException {
+        if (!java.nio.file.Files.exists(file)) return new java.util.ArrayList<>();
+        return java.nio.file.Files.readAllLines(file);
     }
 
     private static List<String> resourceLines(String path) throws IOException {
@@ -676,9 +712,9 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, member renames=%d%n",
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, member renames=%d, super swaps=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
-                methodDropsApplied, interfaceRepairsApplied, memberRenamesApplied);
+                methodDropsApplied, interfaceRepairsApplied, memberRenamesApplied, superswapsApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         for (String line : neutralizationLog) {
@@ -1689,6 +1725,7 @@ public class Rewriter {
     void remapClass(ClassNode cn) {
         cn.name = remapType(cn.name);
         cn.superName = remapType(cn.superName);
+        cn.superName = applySuperSwap(cn.name, cn.superName);
         replaceAll(cn.interfaces, this::remapType);
         if (cn.nestHostClass != null) cn.nestHostClass = remapType(cn.nestHostClass);
         replaceAll(cn.nestMembers, this::remapType);
