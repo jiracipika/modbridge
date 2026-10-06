@@ -1728,13 +1728,13 @@ public class Rewriter {
         String beforeSuperSwap = cn.superName;
         cn.superName = applySuperSwap(cn.name, cn.superName);
         if (!cn.superName.equals(beforeSuperSwap)) {
-            // the swap must carry the super PLUMBING: the ctor's invokespecial
-            // oldSuper.<init> Methodref is a separate constant from superName
-            // (live-boot VerifyError "Bad <init> method call")
+            // the swap must carry the super PLUMBING: every invokespecial to the
+            // old super (ctor <init> AND member super-calls like super.canEnchant)
+            // is a separate constant from superName (live-boot VerifyErrors)
             for (MethodNode m : cn.methods) {
                 for (AbstractInsnNode n : m.instructions) {
                     if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKESPECIAL
-                            && beforeSuperSwap.equals(mi.owner) && "<init>".equals(mi.name)) {
+                            && beforeSuperSwap.equals(mi.owner)) {
                         mi.owner = cn.superName;
                     }
                 }

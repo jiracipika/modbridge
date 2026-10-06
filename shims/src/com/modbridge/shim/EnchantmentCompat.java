@@ -20,4 +20,16 @@ public abstract class EnchantmentCompat {
     protected EnchantmentCompat(Enchantment$Rarity rarity, EnchantmentCategory category,
             EquipmentSlot[] slots) {
     }
+
+    /** 1.20.1 super-call surface (m_5975_; StasisEnchantment overrides + super-calls
+     *  it) — inert: enchantment semantics not claimed, this only links the super-call
+     *  the verifier resolves against the class's superclass. */
+    protected boolean checkCompatibility(net.minecraft.world.item.enchantment.Enchantment other) {
+        return false;
+    }
+
+    /** 1.20.1 super-call surface (m_6081_) — inert, linking only. */
+    protected boolean canEnchant(net.minecraft.world.item.ItemStack stack) {
+        return false;
+    }
 }

@@ -482,11 +482,22 @@ public final class CtorRetargetTest {
                 "test/old/Super", "<init>", "(I)V", false));
         ctor.instructions.add(new InsnNode(Opcodes.RETURN));
         sub.methods.add(ctor);
+        MethodNode member = new MethodNode(Opcodes.ACC_PUBLIC, "check", "(Z)Z", null, null);
+        member.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        member.instructions.add(new VarInsnNode(Opcodes.ILOAD, 1));
+        member.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "test/old/Super", "origMember", "(Z)Z", false));
+        member.instructions.add(new InsnNode(Opcodes.IRETURN));
+        sub.methods.add(member);
         r.remapClass(sub);
         MethodInsnNode superCall = first(ctor, MethodInsnNode.class,
                 m -> m.getOpcode() == Opcodes.INVOKESPECIAL && "<init>".equals(m.name));
         check(superCall != null && superCall.owner.equals("com/modbridge/shim/testmod/NewSuper"),
                 "superswap retargets the ctor's invokespecial oldSuper.<init> owner");
+        MethodInsnNode memberCall = first(member, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKESPECIAL);
+        check(memberCall != null && memberCall.owner.equals("com/modbridge/shim/testmod/NewSuper"),
+                "superswap retargets MEMBER super-calls too (super.canEnchant family)");
         check(sub.superName.equals("com/modbridge/shim/testmod/NewSuper"),
                 "superswap retargets superName itself");
         // shipped rule file parses + guards
