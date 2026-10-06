@@ -143,3 +143,27 @@ net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance	@SHIM@/Abs
 # SUPERSEDES this slice's memberretarget message() rule (its key owner is renamed
 # before memberretargets run, so that rule can no longer fire - removed).
 com/mojang/serialization/DataResult$PartialResult	com/mojang/serialization/DataResult$Error
+
+# --- 1.20.1 -> 1.21.1 VANILLA CLASS RENAMES (config lane round-4 opener, phase 5.9).
+# Derived SYSTEMATICALLY: 1.20.1 srg server classlist minus rules/classlist-1211.txt
+# = 129 gone classes; intersected with the constant pools of BOTH trial jars (only
+# referenced names become rules - unreferenced removals never block linking). Every
+# target verified present in classlist-1211. Blocks the live-boot wall
+# (EnchantmentTableBlock CNFE from supp CommonConfigs, a frame/local-resolved ref).
+# REMOVED-with-no-counterpart and NOT ruled (their referrers are known future
+# walls, mixin targets auto-neutralize): BlockSourceImpl, AbstractProjectileDispense
+# Behavior (mixin), DyeableLeatherItem, Vanishable, GravelBlock, EnchantmentCategory,
+# ProtectionEnchantment, LootDataManager, RecordItem, AdvancementList,
+# SerializationContext/DeserializationContext, FinishedRecipe/CraftingRecipeBuilder.
+# NOTE on PotionContents: the TYPE rename is 1:1 but its STATIC surface drifted
+# (PotionUtils statics are gone - effects became data components); referrer classes
+# become loadable, residual member refs fail NSME only on non-boot runtime paths.
+# No inner-class refs exist for any target (scanned).
+net/minecraft/world/level/block/EnchantmentTableBlock	net/minecraft/world/level/block/EnchantingTableBlock
+net/minecraft/core/BlockSource	net/minecraft/core/dispenser/BlockSource
+net/minecraft/world/level/pathfinder/BlockPathTypes	net/minecraft/world/level/pathfinder/PathType
+net/minecraft/world/level/chunk/ChunkStatus	net/minecraft/world/level/chunk/status/ChunkStatus
+net/minecraft/commands/CommandFunction	net/minecraft/commands/functions/CommandFunction
+net/minecraft/world/level/storage/loot/entries/LootTableReference	net/minecraft/world/level/storage/loot/entries/NestedLootTable
+net/minecraft/network/chat/contents/LiteralContents	net/minecraft/network/chat/contents/PlainTextContents$LiteralContents
+net/minecraft/world/item/alchemy/PotionUtils	net/minecraft/world/item/alchemy/PotionContents
