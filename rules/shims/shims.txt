@@ -1,6 +1,7 @@
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
 com/modbridge/shim/ObfuscationReflectionHelper
+com/modbridge/shim/ResourceLocationCompat
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec

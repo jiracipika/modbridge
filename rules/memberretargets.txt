@@ -32,3 +32,13 @@ com/mojang/serialization/DataResult|()Lcom/mojang/datafixers/util/Either;|get ->
 # site: moonlight MoonlightRegistry.<clinit> m_10595_ x1 (mapSrg -> "register"
 # before this lookup). Criteria registration/runtime NOT claimed.
 net/minecraft/advancements/CriteriaTriggers|(Lnet/minecraft/advancements/CriterionTrigger;)Lnet/minecraft/advancements/CriterionTrigger;|register -> @SHIM@/CriteriaTriggersCompat|(Lnet/minecraft/advancements/CriterionTrigger;)Lnet/minecraft/advancements/CriterionTrigger;|static
+
+# --- ResourceLocation member drift (config lane, phase 5.9, live-boot wall):
+# 1.20.1 static ResourceLocation.isValidResourceLocation(String) (m_135830_) is
+# GONE on 1.21.1; the boolean semantic = tryParse(s) != null (21.1 statics:
+# tryParse -> nullable, parse -> throws, read -> DataResult). Single measured call
+# site: moonlight ConfigBuilder$ResourceLocationConfigValue.lambda$new$0 x1, the
+# ResourceLocation config-value CORRECTOR fired during the eager COMMON config
+# load (supp died there transitively via ModConfigBridge.registerAndLoad ->
+# platform config-correct). Static kind: INVOKESTATIC -> INVOKESTATIC, desc same.
+net/minecraft/resources/ResourceLocation|(Ljava/lang/String;)Z|isValidResourceLocation -> @SHIM@/ResourceLocationCompat|(Ljava/lang/String;)Z|static

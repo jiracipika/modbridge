@@ -433,6 +433,21 @@ public final class ShimFacadeTest {
                         .invoke(null, sentinel_proxy());
         check(returnedTrigger != null,
                 "CriteriaTriggersCompat.register: returns the trigger (caller field keeps its value)");
+
+        // ResourceLocation.isValidResourceLocation adapter (config-correct boot wall)
+        Class<?> rlc = com.modbridge.shim.ResourceLocationCompat.class;
+        check(desc(rlc, "isValidResourceLocation").equals("(Ljava/lang/String;)Z"),
+                "ResourceLocationCompat.isValidResourceLocation desc = the 1.20.1 static surface");
+        // semantics asserted structurally: CALLING isValidResourceLocation would
+        // trigger the vanilla ResourceLocation clinit cascade (netty/joml/...) that
+        // only exists in a full server env - same reason criteriaShimExactness
+        // never constructs a real ResourceLocation. The live boot is the semantic gate.
+        byte[] rlcBytes = java.nio.file.Files.readAllBytes(
+                Path.of("rules/shims/com/modbridge/shim/ResourceLocationCompat.class"));
+        String rlcText = new String(rlcBytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        check(rlcText.contains("tryParse")
+                        && rlcText.contains("(Ljava/lang/String;)Lnet/minecraft/resources/ResourceLocation;"),
+                "isValid: ports to ResourceLocation.tryParse(s) != null (bytecode)");
     }
 
     /** minimal CriterionTrigger stand-in (the interface has 4 members; anonymous
@@ -519,7 +534,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 29, "rules/shims: manifest loads 29 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat)");
+        check(r.shims.size() == 30, "rules/shims: manifest loads 30 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -591,7 +606,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 29, "injectShims(): all 29 shims present under the per-mod package");
+        check(entries.size() == 30, "injectShims(): all 30 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),
