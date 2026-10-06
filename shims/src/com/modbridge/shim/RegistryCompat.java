@@ -20,20 +20,20 @@ public final class RegistryCompat {
     private RegistryCompat() {
     }
 
-    /** 1.20.1 {@code IForgeRegistry.register} surface — delegates to the 21.1 static.
-     *  DUPLICATE-TOLERANT: 1.20.1 forge allowed mod overrides of existing ids
-     *  (supp shulker_shell); 21.1 throws "Adding duplicate key". Overrides are NOT
-     *  claimed — the duplicate is logged once and the existing entry kept, so the
-     *  registry dispatch completes and boot proceeds. */
+    /** 1.20.1 {@code IForgeRegistry.register} surface — LOG-ONCE NO-OP. On the
+     *  translated runtime the SAME entries are already registered + bound through
+     *  moonlight's own DeferredRegister listeners (its 21.1-native path); the
+     *  1.20.1 direct-register call sites (supp registerOverrides, the Registrator
+     *  method-ref lambdas) are that path's REDUNDANT twin. Calling through here
+     *  double-registers (21.1 IllegalStateException "Adding duplicate key") and
+     *  bypasses holder binding (DeferredHolder "unbound value"). Neither the
+     *  duplicate-override nor the direct-register semantics are claimed: entries
+     *  registered ONLY through this path (mod-compat overrides) are inert. */
     public static void register(Registry<Object> registry, ResourceLocation id, Object value) {
-        try {
-            Registry.register(registry, id, value);
-        } catch (IllegalArgumentException duplicate) {
-            if (!warned) {
-                warned = true;
-                System.out.println("[ModBridge shim] duplicate registry key kept existing entry: "
-                        + id + " (" + duplicate.getMessage() + ")");
-            }
+        if (!warned) {
+            warned = true;
+            System.out.println("[ModBridge shim] direct registry register suppressed "
+                    + "(DeferredRegister path owns registration; overrides not claimed)");
         }
     }
 }
