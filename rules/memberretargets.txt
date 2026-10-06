@@ -53,8 +53,8 @@ net/minecraft/resources/ResourceLocation|(Ljava/lang/String;)Z|isValidResourceLo
 # already so). 5 measured sites, all moonlight. memberretargets now covers
 # FieldInsnNode (owner+desc swap, opcode kept). New owner/desc values are final-space
 # vanilla (remapClass leaves them untouched).
-net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|ITEMS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ITEMS
-net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|BLOCKS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|BLOCKS
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|ITEMS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ITEM
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|BLOCKS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|BLOCK
 net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|ENTITY_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ENTITY_TYPE
 net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|FLUIDS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|FLUID
 net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|POI_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/Registry;|POINT_OF_INTEREST_TYPE
