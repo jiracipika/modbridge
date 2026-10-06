@@ -21,3 +21,14 @@ net/minecraftforge/event/entity/living/LivingDamageEvent|(Z)V|setCanceled -> net
 # shim) are never re-touched by it, while surviving DataResult virtuals still are.
 com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow -> @SHIM@/DataResultCompat|(Lcom/mojang/serialization/DataResult;ZLjava/util/function/Consumer;)Ljava/lang/Object;|static
 com/mojang/serialization/DataResult|()Lcom/mojang/datafixers/util/Either;|get -> @SHIM@/DataResultCompat|(Lcom/mojang/serialization/DataResult;)Lcom/mojang/datafixers/util/Either;|static
+
+# --- criteria registration (criteria lane, phase 5.9, live-boot wall from 5.8's
+# session): net/minecraft/advancements/CriteriaTriggers.register(CriterionTrigger)
+# is GONE on 1.21.1 (vanilla triggers are static finals; custom ones register via
+# BuiltInRegistries.TRIGGER_TYPES + an explicit ResourceKey). The 21.1
+# CriterionTrigger interface exposes NO id accessor, so the registration cannot be
+# faithful from the call-site argument alone -> INERT pass-through shim (returns
+# the trigger; caller field assignments keep their value). Single measured call
+# site: moonlight MoonlightRegistry.<clinit> m_10595_ x1 (mapSrg -> "register"
+# before this lookup). Criteria registration/runtime NOT claimed.
+net/minecraft/advancements/CriteriaTriggers|(Lnet/minecraft/advancements/CriterionTrigger;)Lnet/minecraft/advancements/CriterionTrigger;|register -> @SHIM@/CriteriaTriggersCompat|(Lnet/minecraft/advancements/CriterionTrigger;)Lnet/minecraft/advancements/CriterionTrigger;|static

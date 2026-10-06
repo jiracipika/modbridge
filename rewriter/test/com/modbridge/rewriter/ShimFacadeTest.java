@@ -420,6 +420,34 @@ public final class ShimFacadeTest {
         check(ti instanceof net.minecraft.advancements.critereon.SimpleCriterionTrigger.SimpleInstance,
                 "translated-style subclass: IS-A SimpleInstance");
         check(ti.player().isEmpty(), "player(): null predicate -> Optional.empty (null-safe)");
+
+        // criteria REGISTRATION adapter (phase 5.9 live-boot wall): inert pass-through
+        Class<?> reg = com.modbridge.shim.CriteriaTriggersCompat.class;
+        check(desc(reg, "register")
+                        .equals("(Lnet/minecraft/advancements/CriterionTrigger;)Lnet/minecraft/advancements/CriterionTrigger;"),
+                "CriteriaTriggersCompat.register desc = the 1.20.1 static surface exactly");
+        check(java.lang.reflect.Modifier.isStatic(reg.getDeclaredMethod("register",
+                        net.minecraft.advancements.CriterionTrigger.class).getModifiers()),
+                "CriteriaTriggersCompat.register: static");
+        Object returnedTrigger = reg.getDeclaredMethod("register", net.minecraft.advancements.CriterionTrigger.class)
+                        .invoke(null, sentinel_proxy());
+        check(returnedTrigger != null,
+                "CriteriaTriggersCompat.register: returns the trigger (caller field keeps its value)");
+    }
+
+    /** minimal CriterionTrigger stand-in (the interface has 4 members; anonymous
+     *  implementations keep the pass-through test independent of vanilla init) */
+    private static net.minecraft.advancements.CriterionTrigger sentinel_proxy() {
+        return (net.minecraft.advancements.CriterionTrigger)
+                java.lang.reflect.Proxy.newProxyInstance(
+                        net.minecraft.advancements.CriterionTrigger.class.getClassLoader(),
+                        new Class<?>[] {net.minecraft.advancements.CriterionTrigger.class},
+                        (proxy, method, args) -> {
+                            if (method.getName().equals("codec")) return null;
+                            if (method.getName().equals("createCriterion")) return null;
+                            if (method.getName().equals("toString")) return "sentinel";
+                            return null;
+                        });
     }
 
     // --------------------------------------------------- DFU-drift adapter (phase 5.9)
@@ -491,7 +519,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 28, "rules/shims: manifest loads 28 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane class, DataResultCompat)");
+        check(r.shims.size() == 29, "rules/shims: manifest loads 29 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -563,7 +591,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 28, "injectShims(): all 28 shims present under the per-mod package");
+        check(entries.size() == 29, "injectShims(): all 29 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),
@@ -572,5 +600,12 @@ public final class ShimFacadeTest {
         check(cap != null && new String(cap, java.nio.charset.StandardCharsets.ISO_8859_1)
                 .contains("com/modbridge/shim/testmod/Capability"),
                 "injectShims(): injected bytecode self-identifies under the relocated name");
+        // lambda-Handle relocation regression (live-boot CNFE): a lambda-bearing
+        // shim's invokedynamic implMethod Handle must follow the relocation, or the
+        // metafactory bootstrap tries to load the ORIGINAL base name at runtime
+        byte[] drc = entries.get("com/modbridge/shim/testmod/DataResultCompat.class");
+        check(drc != null && !new String(drc, java.nio.charset.StandardCharsets.ISO_8859_1)
+                .contains("com/modbridge/shim/DataResultCompat"),
+                "injectShims(): lambda Handle bsmArgs relocated (no base-name refs in DataResultCompat)");
     }
 }

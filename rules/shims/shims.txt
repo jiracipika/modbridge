@@ -1,3 +1,4 @@
+com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
 com/modbridge/shim/ObfuscationReflectionHelper
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance

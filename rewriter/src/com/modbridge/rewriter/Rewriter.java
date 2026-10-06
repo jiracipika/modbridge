@@ -379,6 +379,15 @@ public class Rewriter {
                         for (int i = 0; i < id.bsmArgs.length; i++) {
                             if (id.bsmArgs[i] instanceof Type ty) {
                                 id.bsmArgs[i] = Type.getType(relocateDescText(ty.getDescriptor(), names));
+                            } else if (id.bsmArgs[i] instanceof Handle h) {
+                                // LambdaMetafactory's implMethod arg: a shim's own
+                                // synthetic lambda$ methods live in the ORIGINAL class
+                                // constant (live-boot CNFE com.modbridge.shim.
+                                // DataResultCompat from DataResultCompat's lambdas)
+                                id.bsmArgs[i] = new Handle(h.getTag(),
+                                        names.getOrDefault(h.getOwner(), h.getOwner()),
+                                        h.getName(), relocateDescText(h.getDesc(), names),
+                                        h.isInterface());
                             }
                         }
                     }
