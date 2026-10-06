@@ -695,3 +695,129 @@ methoddrops needed.
   synced-config path (`sendSyncedConfigsToAllPlayers` → networking classes) at FML's
   real load pass, but it iterates an empty player list at boot time, so no networking
   class resolves there yet.
+
+# Phase 5.7: the crafting-condition serializer wall falls — IConditionSerializer + CraftingHelper shims (2026-10-05, conditions slice)
+
+The conditions-lane wall from the merged boot — `NoClassDefFoundError:
+net/neoforged/neoforge/common/crafting/conditions/IConditionSerializer` attributed to
+`RegHelper.register ← MoonlightRegistry.<clinit>:33` — is gone with TWO shims and TWO
+typerename rules: zero Rewriter.java changes (this lane), same design as the loot lane.
+
+## Why it fired at RegHelper (the trace explained)
+
+Phase 1 deliberately left `IConditionSerializer` unmapped (the typerenames comment),
+so the bare forge→neoforged package fallback renamed every reference to a phantom
+(`net/neoforged/neoforge/common/crafting/conditions/IConditionSerializer` — absent
+from the 21.1 universal jar, javap-verified). The resolution site is NOT the
+serializer's own code path: `RegHelper`/`RegHelperImpl` is the generic registration
+helper EVERY mod registration goes through, and its `registerSimpleRecipeCondition`
+body constructs `OptionalRecipeCondition` and passes it to
+`CraftingHelper.register(IConditionSerializer)` — verifying that body forces the
+assignability constraint `OptionalRecipeCondition <: IConditionSerializer`, which
+resolves the phantom. `MoonlightRegistry.<clinit>:33` (source) is simply the FIRST
+`RegHelper.register` call, i.e. the first event that links `RegHelper` — hence a CNFE
+whose stack names a method that never runs.
+
+## The measured 1.20.1 surface (javap, both raw jars)
+
+- **`IConditionSerializer`**: 1 implementer total — moonlight
+  `OptionalRecipeCondition implements IConditionSerializer<OptionalRecipeCondition$Instance>`
+  with `write(JsonObject,T)` / `read(JsonObject):T` / `getID()` plus
+  `ICondition`-erased bridges (exact erasure of the `<T extends ICondition>` bound).
+  Registrations: `RegHelper(Impl).registerSimpleRecipeCondition` → forge
+  `CraftingHelper.register(IConditionSerializer)` (forge's static facade over
+  ForgeRegistries.CONDITION_SERIALIZERS — no direct registry-key references
+  anywhere in the trial jars; supplementaries registers through the same
+  moonlight helper with its "flag" condition).
+- **`CraftingHelper`**: 4 members referenced — `register(IConditionSerializer)` (the
+  boot wall), `getCondition(JsonObject)` (PlatHelperImpl, TemplateRecipeManagerImpl),
+  and the ingredient pair `register(ResourceLocation, IIngredientSerializer)` /
+  `getID(IIngredientSerializer)` (BlockTypeSwapIngredientImpl — the ingredient
+  family, a DIFFERENT removed surface, deliberately NOT this lane; its
+  `IIngredientSerializer` remains package-renamed phantom).
+- **`ICondition` / `ICondition$IContext`**: already typerenamed to the real 21.1
+  interface — which kept `test(IContext)` and `IContext.EMPTY`/`TAGS_INVALID` and
+  dropped only `getID()` (no cross-type `getID` caller measured; the translated
+  `OptionalRecipeCondition$Instance` implements the real 21.1 ICondition minus
+  `codec()` — loads fine, AbstractMethodError only if condition dispatch ever reads
+  it, i.e. recipe-parse time, not claimed).
+
+## The 21.1 truth (javap, universal jar)
+
+`net/neoforged/neoforge/common/conditions/ICondition` = codec-based
+(`test(IContext)` + `MapCodec<? extends ICondition> codec()`; statics CODEC /
+LIST_CODEC / writeConditions); `ICondition$IContext` alive; condition types register
+`MapCodec`s into `NeoForgeRegistries.Keys.CONDITION_CODECS`
+(`ResourceKey<Registry<MapCodec<? extends ICondition>>>`) and dispatch by "type" via
+`Registry.byNameCodec().dispatch(...)`. `IConditionSerializer` gone.
+`net/neoforged/neoforge/common/crafting/CraftingHelper` EXISTS but was reshaped to
+ingredient-codec builders only — every member the mods call is gone.
+
+## What was built (option (b), the round-1 design)
+
+1. **`@SHIM@/IConditionSerializer`** (source
+   `shims/src/net/neoforged/neoforge/common/conditions/IConditionSerializer.java`) —
+   the exact 1.20.1 surface (`write`/`read`/`getID` + mirrored default `getJson`),
+   generically bound `<T extends ICondition>` against the REAL 21.1 conditions
+   interface, so the translated `OptionalRecipeCondition` is a true implementer
+   (bridges included).
+2. **`@SHIM@/CraftingHelper`** (source
+   `shims/src/net/neoforged/neoforge/common/crafting/CraftingHelper.java`) —
+   `register(IConditionSerializer)`: 1.20.1 return-value contract + inert per-mod
+   registry (the serializers stay reachable for the mod's own flow; nothing on 21.1
+   dispatches Gson serializers). `getCondition(JsonObject)`: the FAITHFUL half of
+   the bridge — parses via 21.1 `ICondition.CODEC` (JsonOps), so known
+   vanilla/NeoForge condition JSON parses for real at datapack load; unknown /
+   translated types fail LOUDLY naming the condition id (converted from any
+   failure, including the offline-unbootstrapped-registry case). The ingredient
+   members are deliberately absent (deferred lane — see caveats).
+3. **Rules** (appended section at the end of rules/typerenames.txt):
+   `.../conditions/IConditionSerializer -> @SHIM@/IConditionSerializer` (exact-key
+   beats the package fallback; no collision with the existing `ICondition`/`ICondition$`
+   rules) and `.../crafting/CraftingHelper -> @SHIM@/CraftingHelper` (same; the real
+   21.1 CraftingHelper at the platform name is untouched for platform code).
+
+## Offline proofs (no server; scripts/proof outputs in /tmp/loot-lane)
+
+Both raw jars translate clean through the MERGED pipeline. 10-check conditions
+proof: zero bytecode references to all 4 removed/phantom condition names (raw-space
+forge name + package-renamed phantom + both CraftingHelper spellings) in either jar;
+12 focus classes (MoonlightRegistry, RegHelper, RegHelperImpl,
+OptionalRecipeCondition+Instance, PlatHelperImpl, TemplateRecipeManagerImpl, the
+ModLootConditions ICondition chain, ForgeHelperImpl, MoonlightForge,
+ConditionHackMixin, Supplementaries) reference only existing platform/own/shim
+classes; both condition shims injected per mod. Regression: the round-1 loot proof
+re-run on the same fresh outputs — 9/9 (zero loot-name refs; both jars). And the
+unresolved-ref sets REGRESSED BY NOTHING vs the round-1 translations in either jar,
+with the condition phantoms gone from the sets. Bytecode spot-checks:
+`RegHelperImpl.registerSimpleRecipeCondition` now calls
+`com/modbridge/shim/<modid>/CraftingHelper.register:(Lcom/modbridge/shim/<modid>/IConditionSerializer;)...`;
+`OptionalRecipeCondition implements com.modbridge.shim.<modid>.IConditionSerializer<...>`.
+
+Gates: test-shims 3/3 (ShimFacadeTest 106 checks; manifest 24→26; condition checks:
+erased bridge shapes vs the `<T extends ICondition>` bound, 1.20.1 ctor/call shapes,
+inert-registry + return-contract runtime semantics, getCondition loud-failure with
+the id, offline-safe class-init), ctor-retarget 3/3, refmap 3/3, srg-resolver 4/4,
+fixture sanity (`ctor retargets=0`, `method drops=0`), agent builds.
+
+## Caveats (honest)
+
+- Recipe-JSON condition PARSING of translated condition types (e.g.
+  `supplementaries:flag`, moonlight's own) fails loudly at datapack/recipe load
+  (known vanilla/NeoForge types parse for real). The full (a)-bridge would
+  synthesize a MapCodec per translated serializer — deferred until a boot proves a
+  translated condition is actually load-bearing.
+- Cross-mod condition JSON: supplementaries' "flag" condition is registered in the
+  supplementaries shim module only; a moonlight recipe referencing it fails loudly
+  (per-recipe parse error, loader continues). Same per-mod isolation as every shim.
+- **Ingredient serializer family is the next wall** (measured, deferred):
+  `net/neoforged/neoforge/common/crafting/IIngredientSerializer` still
+  package-renamed phantom — moonlight BlockTypeSwapIngredientImpl(+1) references it
+  and calls the two CraftingHelper ingredient members; that class loads lazily, so
+  it does not affect boot, but any recipe using `moonlight:block_type_swap`
+  ingredients dies at parse time. Same shim design applies (interface + the two
+  CraftingHelper members + inert registry).
+- Otherwise the unresolved-set remainder is unchanged from round 1 (client-side
+  classes, networking/SimpleChannel package drift, FinishedRecipe datagen,
+  AbstractCriterionTriggerInstance, eager-config already covered by the config
+  lane's bridge).

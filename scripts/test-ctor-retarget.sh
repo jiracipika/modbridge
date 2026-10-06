@@ -18,7 +18,9 @@ BUS=$(ls "$LIB"/net/neoforged/bus/*/bus-*.jar)
 LOADER=$(ls "$LIB"/net/neoforged/fancymodloader/loader/*/loader-*.jar)
 GSON=$(ls "$LIB"/com/google/code/gson/gson/*/gson-*.jar | head -n 1)
 DFU=$(ls "$LIB"/com/mojang/datafixerupper/*/datafixerupper-*.jar | head -n 1)
-PLATFORM_CP="$SRV:$NJAR:$BUS:$LOADER:$GSON:$DFU"
+BRIG=$(ls "$LIB"/com/mojang/brigadier/*/brigadier-*.jar | head -n 1)
+FAST=$(ls "$LIB"/it/unimi/dsi/fastutil/*/fastutil-*.jar | head -n 1)
+PLATFORM_CP="$SRV:$NJAR:$BUS:$LOADER:$GSON:$DFU:$BRIG:$FAST"
 
 rm -rf build/ctortargettest
 mkdir -p build/ctortargettest

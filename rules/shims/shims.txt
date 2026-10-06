@@ -17,6 +17,8 @@ net/neoforged/neoforge/common/capabilities/ForgeCapabilities
 net/neoforged/neoforge/common/capabilities/ForgeCapabilities$1
 net/neoforged/neoforge/common/capabilities/ForgeCapabilities$2
 net/neoforged/neoforge/common/capabilities/ICapabilityProvider
+net/neoforged/neoforge/common/conditions/IConditionSerializer
+net/neoforged/neoforge/common/crafting/CraftingHelper
 net/neoforged/neoforge/common/util/LazyOptional
 net/neoforged/neoforge/common/util/NonNullConsumer
 net/neoforged/neoforge/common/util/NonNullSupplier
