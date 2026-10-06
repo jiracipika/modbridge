@@ -509,9 +509,10 @@ public final class CtorRetargetTest {
         // shipped rule file parses + guards
         Rewriter rs = new Rewriter();
         rs.loadRules(Path.of("rules"));
-        check(rs.superSwaps.size() == 1
-                        && rs.superSwaps.containsKey("net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment"),
-                "rules/superswaps.txt parses (1 guarded rule)");
+        check(rs.superSwaps.size() >= 2
+                        && rs.superSwaps.containsKey("net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment")
+                        && rs.superSwaps.containsKey("net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/MovingBlockSource"),
+                "rules/superswaps.txt parses (>=2 rules incl. the interface-strip)");
     }
 
     void fieldRetargetMechanism() throws IOException {

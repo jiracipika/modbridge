@@ -1755,10 +1755,6 @@ public class Rewriter {
 
     void remapClass(ClassNode cn) {
         cn.name = remapType(cn.name);
-        // interface-strip first (guards on the REMAPPED name, like superswaps)
-        if (cn.interfaces != null) {
-            cn.interfaces.removeIf(itf -> stripInterface(cn.name, itf));
-        }
         cn.superName = remapType(cn.superName);
         String beforeSuperSwap = cn.superName;
         cn.superName = applySuperSwap(cn.name, cn.superName);
@@ -1776,6 +1772,11 @@ public class Rewriter {
             }
         }
         replaceAll(cn.interfaces, this::remapType);
+        // interface-strip AFTER the interfaces remap (the guard name is remapped-space:
+        // a 1.20.1 interface renamed onto a 21.1 CLASS - see superswaps.txt)
+        if (cn.interfaces != null) {
+            cn.interfaces.removeIf(itf -> stripInterface(cn.name, itf));
+        }
         if (cn.nestHostClass != null) cn.nestHostClass = remapType(cn.nestHostClass);
         replaceAll(cn.nestMembers, this::remapType);
         replaceAll(cn.permittedSubclasses, this::remapType);
