@@ -1655,7 +1655,7 @@ public class Rewriter {
                 if (mapped != null) f.name = mapped;
             }
         }
-        if (memberRenames.isEmpty()) return;
+        if (memberRenames.isEmpty() && memberRetargets.isEmpty()) return;
         for (MethodNode mn : cn.methods) {
             String renamed = memberRenames.get(cn.name + "|" + mn.desc + "|" + mn.name);
             if (renamed != null) mn.name = renamed;
