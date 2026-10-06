@@ -1,0 +1,20 @@
+# Method-body drops: owner|desc|name — the whole body is replaced by a typed default
+# return. Only for surfaces whose 1.20.1 semantics have NO reachable 21.1 counterpart
+# and whose documented behavior is already "logged no-op / defaults" (trial 002 phase
+# 5.5). Never target <init> (the rewriter rejects it — a ctor body must keep its super
+# call). Mod-owned class names, so collisions are forks.
+#
+# moonlight ConfigSpecWrapper.register(): the entire body is the 1.20.1-only
+# ModContainer.addConfig(ModConfig) bookkeeping call. On 21.1 the equivalent tracking
+# already happened when the ModConfig was constructed (rules/ctorretargets.txt maps
+# that ctor to ConfigTracker.registerConfig — trackConfig + validateSpec), and the
+# 21.1 config pipeline consults ConfigTracker's own maps, never a container list.
+net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|register
+# moonlight ConfigSpecWrapper.loadFromFile(): moonlight's own early direct-load path.
+# It reflects into ModConfig.setConfigData (a method the final 21.1 ModConfig can
+# never carry — findMethod can only return null and the caller does not guard it) and
+# dispatches IConfigEvent/dispatches ModConfig.save() — all removed in the 21.1 config
+# rework. Dropping the body routes config loading through FML's own 21.1 lifecycle
+# (ConfigTracker.loadConfigs builds the toml from spec defaults), which the ctor
+# registration above enrolled both configs into.
+net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|loadFromFile

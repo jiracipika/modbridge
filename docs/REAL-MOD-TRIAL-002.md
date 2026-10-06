@@ -355,3 +355,112 @@ verify present in both output jars with 0 residual forge refs (forge-ref gate).
   logs — final-state stacks are preserved in
   `testenv/server-121/crash-reports/crash-2026-10-05_18.58.31-fml.txt` (grep excerpts
   live in testenv/evidence/phase5-facade-boot.txt).
+
+---
+
+# Phase 5.5: the ModConfig ctor wall falls — configs clinit passes in full on both mods (2026-10-05, night slice)
+
+Phase 5's single remaining blocker is GONE, and it took exactly one rule + a general
+mechanism. Both mods now sail through their entire config static-init (the phase-5
+death point) and die one layer further out, in their own `commonInit`, on the next
+documented (b)-set — precisely classified below with ground truth.
+
+## The wall was cheaper than the phase-5 plan assumed
+
+The phase-5 notes planned "a ctor-call retarget to a factory that REFLECTIVELY builds
+the real ModConfig, with the agent redefineModule-opening net.neoforged.fml.config".
+Ground truth (javap on the sandbox's loader 4.0.44 + fmlcore 47.4.8) made reflection
+unnecessary:
+
+- NeoForge 21.1 `ModConfig` is final with one package-private 5-arg ctor
+  `(Type, IConfigSpec, ModContainer, String, ReentrantLock)` — pure field-sets.
+- `ConfigTracker.registerConfig(Type, IConfigSpec, ModContainer, String)` is PUBLIC,
+  takes exactly the 4 args moonlight passes to `new ModConfig(...)`, and does
+  ctor + `IConfigSpec.validateSpec` + `trackConfig` (+ eager open for STARTUP),
+  returning the instance.
+- Forge 1.20.1's 4-arg ctor field-set AND self-tracked via
+  `ConfigTracker.trackConfig(this)` — so `registerConfig` is EXACT semantic parity
+  (plus spec validation 1.20.1 didn't do at that site), and the receiver-lock
+  bookkeeping (locksByMod) comes along for free. No shim, no reflection, no
+  module-opening.
+
+## What was built
+
+1. **`rules/ctorretargets.txt` + the ctor-retarget pass** (rewriter): general
+   NEW+DUP+INVOKESPECIAL surgery — forward-scan like the ResourceLocation rewrite,
+   drop NEW+DUP, insert `GETSTATIC <newOwner>.<field>` under the args, swap
+   INVOKESPECIAL for INVOKEVIRTUAL. Operand-stack shape identical (the returned
+   instance replaces the uninitialized ref 1:1; maxStack only shrinks). Frames INSIDE
+   the ctor-arg region (a branch among the args) name the uninitialized ref in TWO
+   slots (NEW pushes it, DUP copies it): the first becomes the receiver type, the DUP
+   copy is removed — a plain entry-drop would leave frames one slot short.
+   FrameNode counts are private in ASM 9.x, so mutated frames are REBUILT (the
+   `nStack` field does not exist to assign). Applied at raw-space call sites; inserted
+   names are final-space and pass through the type remap untouched.
+2. **`FMLJavaModLoadingContext` shim** (15th shim class): the retarget surfaced the
+   NEXT wall inside the same constructor — `FMLJavaModLoadingContext.get()
+   .getModEventBus().addListener(...)` at ConfigSpecWrapper.java:73, a forge-only
+   class outside a @Mod class (the @Mod ctor splice never touches it). The shim
+   routes `getModEventBus()` through `ModLoadingContext.get().getActiveContainer()
+   .getEventBus()` — sound because the SAME constructor had already resolved
+   `getActiveContainer()` successfully on the modloading-worker thread, and during
+   construction the active container IS the owning mod (same bus the @Mod splice
+   injects). Wired via typerename → `@SHIM@/FMLJavaModLoadingContext`.
+3. **`rules/methoddrops.txt` + the method-drop pass**: whole-body replacement with a
+   typed default return (`<init>` rejected at load time — the super-call invariant).
+   This killed the entire remaining config chain in two rules, without new shims:
+   - `register()`: its entire body is `activeContainer.addConfig(modConfig)` —
+     1.20.1-only bookkeeping already covered by the ctor's registerConfig tracking
+     (21.1 FML consults ConfigTracker's own maps, never a container config list).
+   - `loadFromFile()`: moonlight's early direct-load path — reflects into
+     `ModConfig.setConfigData` (a method the FINAL 21.1 ModConfig can never carry:
+     `findMethod` can only return null and the caller does not guard it), then
+     `IConfigEvent.loading` / `dispatchConfigEvent` / `ModConfig.save()` — all
+     removed in the 21.1 config rework, and the method's own try/catch converts every
+     failure into a fatal ConfigLoadingException. No shim can make this path succeed;
+     the no-op body routes config loading through FML's OWN 21.1 lifecycle
+     (`ConfigTracker.loadConfigs` builds the toml from spec defaults — the ctor
+     registration enrolled both configs into it).
+
+## Boot progression (server-121, agent drop-in, evidence: testenv/evidence/phase55-config-ctor-boot.txt)
+
+| cycle | wall hit | fixed by |
+|---|---|---|
+| start | `NoSuchMethodError ModConfig.<init>` (phase-5 stop) | ctorretargets.txt rule |
+| 1 | `NoClassDefFoundError FMLJavaModLoadingContext` (ConfigSpecWrapper.<init>:73) | FMLJavaModLoadingContext shim |
+| 2 | `NoSuchMethodError ModContainer.addConfig` + `NoSuchMethodError ModConfig.getHandler` | methoddrops (register, loadFromFile) |
+| 3 | **configs clinit passes on BOTH mods** | — |
+
+Final walls — the next (b)-layer, both in the mods' own commonInit:
+
+| wall | signature | scope |
+|---|---|---|
+| loot Serializer world | `NoClassDefFoundError: net/minecraft/world/level/storage/loot/Serializer` (moonlight commonInit:75, refs in MoonlightRegistry + ModLootConditions) | 1.21.1 removed the interface entirely (javap-verified): loot conditions/functions are `LootItemConditionType`/codec, GLM serializers are MapCodec — a semantic per-implementer bridge, not a rename |
+| eager config reads | `IllegalStateException: Cannot get config value before config is loaded` from real `ModConfigSpec$ConfigValue.getRaw` (supp commonInit:88 via its configs clinit) | legal on 1.20.1 BECAUSE moonlight eagerly loaded configs during registration (the dropped loadFromFile path); 21.1 FML loads COMMON configs later. Fix is a design decision (eager-load bridge vs deferred reads), not mechanical |
+
+## Gates
+
+- matrix: **16/16** after all changes (final rules).
+- unit: `scripts/test-ctor-retarget.sh` (NEW, 35 checks: surgery shape, frame-slot
+  collapse, scan-stop, rule parsing incl. both real rule files, ctor-drop rejection),
+  `scripts/test-shims.sh` 3/3 (shim count 14→15), refmap 3/3, srg-resolver 4/4.
+- fixture sanity: `ctor retargets=0`, `method drops=0` on the fixture jar (rules inert
+  where they should be).
+- phase-1 real-mod regression: nanny-1.0.6 + deuf-1.3 + fixture boot clean
+  (`Done (0.586s)`, both listed, 0 ERROR/FATAL lines).
+
+## Caveats (honest)
+
+- Config PERSISTENCE is still the documented no-op: values load from spec defaults
+  via FML's pipeline; moonlight's early-direct-load (and its setConfigData write-back)
+  is dead by rule. Editing a config file will take effect only where FML re-reads it.
+- The IConfigEvent-typed listeners registered via the shim bus (ctor offsets 128-168)
+  are so far inert-by-erasure (javac compiles Consumer lambdas with erased Object
+  descriptors; the checkcast into the removed IConfigEvent sits inside the lambda
+  body and only resolves if the listener fires). If a real 21.1 ModConfigEvent ever
+  dispatches into one, the next wall is a CNFE there — candidates: shim the interface
+  or methoddrop the lambda bodies. Not hit on this boot (construction died before
+  server config load).
+- The two new walls are (b)-layer: both need semantic bridges (codec adapters /
+  eager-load design), not mechanical rules. They are the scoped opener for the next
+  slice, ahead of networking (SimpleChannel) and the remaining datagen surfaces.

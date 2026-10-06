@@ -1,0 +1,16 @@
+# Ctor-call retargets: a 1.20.1 `new X(args)` whose constructor is gone on 21.1 but
+# whose full semantics survive behind a public factory-style call. Rewrite:
+#   NEW X; DUP; <args>; INVOKESPECIAL X.<init>(oldDesc)V
+# -> GETSTATIC newOwner.field; <args>; INVOKEVIRTUAL newOwner.method (newDesc)
+# Identical operand-stack shape: the returned instance replaces the uninitialized ref.
+#
+# Format: oldOwner|oldCtorDesc -> newOwner|receiverField|newMethod|newMethodDesc
+#
+# Forge 1.20.1's public 4-arg ModConfig ctor field-set AND self-tracked with
+# ConfigTracker.trackConfig(this). NeoForge 21.1 made the class final with a
+# package-private 5-arg ctor (adds a per-mod ReentrantLock) and moved registration to
+# the public ConfigTracker.registerConfig(Type, IConfigSpec, ModContainer, String):
+# ctor + IConfigSpec.validateSpec + trackConfig (+ eager open for STARTUP), returns
+# the instance — exact semantic parity for the measured 1.20.1 call surface
+# (moonlight ConfigSpecWrapper.<init>; trial 002 phase 5.5).
+net/minecraftforge/fml/config/ModConfig|(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)V -> net/neoforged/fml/config/ConfigTracker|INSTANCE|registerConfig|(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;

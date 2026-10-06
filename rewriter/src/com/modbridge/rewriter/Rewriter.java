@@ -58,6 +58,8 @@ import java.util.zip.ZipEntry;
  *        - @Mod class: rewrite the no-arg constructor to take the mod event bus
  *          (IEventBus) and splice out the FMLJavaModLoadingContext lookup chain.
  *        - new ResourceLocation(a, b) -> ResourceLocation.fromNamespaceAndPath(a, b).
+ *        - ctor-call retargets (rules/ctorretargets.txt): constructors whose semantics
+ *          survive behind a public factory call (ModConfig -> ConfigTracker.registerConfig).
  *   2. member renames (old-space owner|desc|name -> new name), then
  *   3. type renames everywhere: exact type table, then package-prefix table.
  *
@@ -116,6 +118,15 @@ public class Rewriter {
     /** call-site retargets for members that became interface-default methods:
      *  owner|desc|name -> newOwner|newDesc|interface-or-virtual */
     final Map<String, String[]> memberRetargets = new HashMap<>();
+    /** ctor-call retargets for constructors replaced by a public factory-style call:
+     *  owner|ctorDesc -> newOwner|receiverField|newMethod|newMethodDesc */
+    final Map<String, String[]> ctorRetargets = new HashMap<>();
+    /** owners named by ctorRetargets (fast pre-scan before the full-key lookup) */
+    final Set<String> ctorRetargetOwners = new HashSet<>();
+    /** method-body drops for whole methods whose 1.20.1 semantics are already covered
+     *  elsewhere on 21.1 (or are documented no-ops): owner|desc|name -> typed return */
+    final Set<String> methodDrops = new HashSet<>();
+    int methodDropsApplied;
     /** 1.21.1 platform class universe (internal names): minecraft server + neoforge
      *  libraries. Optional — when absent, only leftover forge refs count as drift. */
     final Set<String> classlist = new HashSet<>();
@@ -149,6 +160,7 @@ public class Rewriter {
 
     int fmlChainsSpliced;
     int resourceLocationCtors;
+    int ctorRetargetsApplied;
     int memberRenamesApplied;
     int classesTransformed;
 
@@ -173,6 +185,8 @@ public class Rewriter {
         addDescRules(readLines(rulesDir.resolve("memberdescrenames.txt")));
         addSrgRules(readLines(rulesDir.resolve("srgmembers.txt")));
         addRetargetRules(readLines(rulesDir.resolve("memberretargets.txt")));
+        addCtorRetargetRules(readLines(rulesDir.resolve("ctorretargets.txt")));
+        addMethodDrops(readLines(rulesDir.resolve("methoddrops.txt")));
         addClasslist(readLines(rulesDir.resolve("classlist-1211.txt")));
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
@@ -188,6 +202,8 @@ public class Rewriter {
         addDescRules(resourceLines("/rules/memberdescrenames.txt"));
         addSrgRules(resourceLines("/rules/srgmembers.txt"));
         addRetargetRules(resourceLines("/rules/memberretargets.txt"));
+        addCtorRetargetRules(resourceLines("/rules/ctorretargets.txt"));
+        addMethodDrops(resourceLinesOptional("/rules/methoddrops.txt"));
         addClasslist(resourceLinesOptional("/rules/classlist-1211.txt"));
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
@@ -202,10 +218,11 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d classlist, %d mojrenames, %d member-targets classes, %d shims%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d classlist, %d mojrenames, %d member-targets classes, %d shims%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
-                classlist.size(), mojMemberRenames.size(), memberTargets.size(), shims.size());
+                ctorRetargets.size(), methodDrops.size(), classlist.size(), mojMemberRenames.size(),
+                memberTargets.size(), shims.size());
     }
 
     /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
@@ -426,6 +443,30 @@ public class Rewriter {
         }
     }
 
+    /** oldOwner|oldCtorDesc -> newOwner|receiverField|newMethod|newMethodDesc */
+    void addCtorRetargetRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#")) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad ctorretarget line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 2 || val.length != 4) throw new IOException("bad ctorretarget line: " + line);
+            ctorRetargets.put(key[0] + "|" + key[1], val);
+            ctorRetargetOwners.add(key[0]);
+        }
+    }
+
+    /** owner|desc|name of methods whose whole body is replaced by a typed return */
+    void addMethodDrops(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#")) continue;
+            String[] key = line.split("\\|");
+            if (key.length != 3) throw new IOException("bad methoddrop line: " + line);
+            methodDrops.add(key[0] + "|" + key[1] + "|" + key[2]);
+        }
+    }
+
     private void addSrgRules(List<String> lines) throws IOException {
         for (String line : lines) {
             int eq = line.indexOf('=');
@@ -587,8 +628,9 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, member renames=%d%n",
-                classesTransformed, fmlChainsSpliced, resourceLocationCtors, memberRenamesApplied);
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, member renames=%d%n",
+                classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
+                methodDropsApplied, memberRenamesApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         for (String line : neutralizationLog) {
@@ -636,6 +678,8 @@ public class Rewriter {
             rewriteModConstructor(cn);
         }
         rewriteResourceLocationCtors(cn);
+        rewriteCtorRetargets(cn);
+        applyMethodDrops(cn);
         // phase-4: mixin annotations carry their injection targets as plain string
         // constants ASM cannot resolve — rewrite them in the raw 1.20.1 space before
         // the generic passes (remapClass only touches Type/enum values, not strings).
@@ -1286,6 +1330,163 @@ public class Rewriter {
                 }
                 n = matched ? after : n.getNext();
             }
+        }
+    }
+
+    /**
+     * new X(args) -> newOwner.field.newMethod(args) for constructors whose semantics
+     * survive behind a public factory-style call (rules/ctorretargets.txt; current
+     * entry: the Forge 1.20.1 ModConfig ctor -> ConfigTracker.registerConfig, which
+     * field-sets AND tracks exactly like the old self-tracking ctor).
+     *
+     * Same NEW+DUP forward-scan as the ResourceLocation rewrite; the receiver field is
+     * pushed under the args and INVOKESPECIAL becomes INVOKEVIRTUAL — the returned
+     * instance replaces the uninitialized ref 1:1 on the operand stack, so maxStack and
+     * every frame AFTER the window stay valid. Frames INSIDE the argument region (a
+     * branch among the ctor args) still name the uninitialized ref in two slots
+     * (NEW+DUP): the first becomes the receiver type, the DUP copy is removed (see
+     * fixArgRegionFrames).
+     */
+    void rewriteCtorRetargets(ClassNode cn) {
+        if (ctorRetargets.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            AbstractInsnNode n = mn.instructions.getFirst();
+            while (n != null) {
+                AbstractInsnNode dup = n.getNext();
+                if (!(n instanceof TypeInsnNode t)
+                        || t.getOpcode() != Opcodes.NEW
+                        || !ctorRetargetOwners.contains(t.desc)
+                        || dup == null || dup.getOpcode() != Opcodes.DUP) {
+                    n = n.getNext();
+                    continue;
+                }
+                // forward-scan for the INVOKESPECIAL that consumes this NEW+DUP pair
+                AbstractInsnNode c = dup.getNext();
+                MethodInsnNode ctor = null;
+                String[] rule = null;
+                while (c != null && !(c instanceof TypeInsnNode)) {
+                    if (c instanceof MethodInsnNode mi
+                            && mi.getOpcode() == Opcodes.INVOKESPECIAL
+                            && "<init>".equals(mi.name)
+                            && t.desc.equals(mi.owner)) {
+                        rule = ctorRetargets.get(t.desc + "|" + mi.desc);
+                        ctor = mi;
+                        break;
+                    }
+                    c = c.getNext();
+                }
+                if (rule == null) {
+                    n = n.getNext(); // no rule for this ctor (or nested-new: leave untouched)
+                    continue;
+                }
+                AbstractInsnNode after = ctor.getNext();
+                FieldInsnNode receiver = new FieldInsnNode(Opcodes.GETSTATIC,
+                        rule[0], rule[1], "L" + rule[0] + ";");
+                MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                        rule[0], rule[2], rule[3], false);
+                fixArgRegionFrames(mn, dup, ctor, "L" + rule[0] + ";");
+                mn.instructions.insert(dup, receiver);
+                mn.instructions.insert(ctor, call);
+                mn.instructions.remove(n);
+                mn.instructions.remove(dup);
+                mn.instructions.remove(ctor);
+                ctorRetargetsApplied++;
+                n = after;
+            }
+        }
+    }
+
+    /**
+     * Inside the ctor-arg region the operand stack carries the uninitialized ref TWICE
+     * (NEW pushes it, DUP copies it); frames there name it in both slots. The rewrite
+     * replaces the pair with exactly one INSTANCE reference, so the first uninit entry
+     * becomes the receiver type and any further copies (the DUP) are removed — other
+     * entries keep their positions. A LabelNode on a frame stack is always an
+     * uninitialized type, and within the window the only construction in flight is this
+     * one (the forward scan stops at any NEW), so every LabelNode found belongs to it.
+     */
+    private static void fixArgRegionFrames(MethodNode mn, AbstractInsnNode from,
+                                           AbstractInsnNode to, String receiverTypeDesc) {
+        for (AbstractInsnNode i = from.getNext(); i != to; ) {
+            AbstractInsnNode next = i.getNext();
+            if (i instanceof FrameNode fr && fr.stack != null) {
+                List<Object> stack = new ArrayList<>(fr.stack);
+                boolean replaced = false;
+                for (int k = 0; k < stack.size(); k++) {
+                    if (stack.get(k) instanceof LabelNode) {
+                        if (!replaced) {
+                            stack.set(k, receiverTypeDesc);
+                            replaced = true;
+                        } else {
+                            stack.remove(k);
+                            k--;
+                        }
+                    }
+                }
+                if (replaced) {
+                    // FrameNode's count fields are private (ASM 9.x) — rebuild the node
+                    FrameNode fixed = new FrameNode(fr.type,
+                            fr.local == null ? 0 : fr.local.size(),
+                            fr.local == null ? null : fr.local.toArray(),
+                            stack.size(), stack.toArray());
+                    mn.instructions.insert(i, fixed);
+                    mn.instructions.remove(i);
+                }
+            }
+            i = next;
+        }
+    }
+
+    /**
+     * Replaces whole method bodies with a typed default return (rules/methoddrops.txt).
+     * For surfaces whose 1.20.1 semantics have NO 21.1 counterpart at all and whose
+     * call sites cannot succeed (moonlight's ConfigSpecWrapper.loadFromFile reflects
+     * into ModConfig.setConfigData — a method the final 21.1 class can never carry),
+     * a no-op body is the only reachable state; the alternative is construction death.
+     * Used only where the documented behavior is already "logged no-op / defaults".
+     * <init> is rejected: a constructor body must keep its super call.
+     */
+    void applyMethodDrops(ClassNode cn) {
+        if (methodDrops.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            if (!methodDrops.contains(cn.name + "|" + mn.desc + "|" + mn.name)) continue;
+            if ("<init>".equals(mn.name)) {
+                throw new IllegalStateException("methoddrop rule targets a constructor: "
+                        + cn.name + mn.desc);
+            }
+            if ((mn.access & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0) continue;
+            mn.instructions.clear();
+            // the variable table references labels that no longer exist in the (now
+            // straight-line) body, and try/catch ranges would be empty — both go
+            mn.localVariables = null;
+            mn.tryCatchBlocks = null;
+            org.objectweb.asm.Type ret = Type.getReturnType(mn.desc);
+            switch (ret.getSort()) {
+                case Type.VOID -> mn.instructions.add(new InsnNode(Opcodes.RETURN));
+                case Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> {
+                    mn.instructions.add(new InsnNode(Opcodes.ICONST_0));
+                    mn.instructions.add(new InsnNode(Opcodes.IRETURN));
+                }
+                case Type.LONG -> {
+                    mn.instructions.add(new InsnNode(Opcodes.LCONST_0));
+                    mn.instructions.add(new InsnNode(Opcodes.LRETURN));
+                }
+                case Type.FLOAT -> {
+                    mn.instructions.add(new InsnNode(Opcodes.FCONST_0));
+                    mn.instructions.add(new InsnNode(Opcodes.FRETURN));
+                }
+                case Type.DOUBLE -> {
+                    mn.instructions.add(new InsnNode(Opcodes.DCONST_0));
+                    mn.instructions.add(new InsnNode(Opcodes.DRETURN));
+                }
+                default -> {
+                    mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+                    mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+                }
+            }
+            mn.maxStack = ret.getSize();
+            methodDropsApplied++;
+            System.out.println("method body dropped: " + cn.name + "." + mn.name + mn.desc);
         }
     }
 

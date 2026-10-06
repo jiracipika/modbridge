@@ -1,5 +1,6 @@
 com/modbridge/shim/ObfuscationReflectionHelper
 net/neoforged/fml/config/ConfigFileTypeHandler
+net/neoforged/fml/javafmlmod/FMLJavaModLoadingContext
 net/neoforged/neoforge/common/capabilities/Capability
 net/neoforged/neoforge/common/capabilities/CapabilityManager
 net/neoforged/neoforge/common/capabilities/CapabilityToken

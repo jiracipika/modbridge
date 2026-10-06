@@ -47,6 +47,11 @@ net/minecraftforge/common/util/NonNullConsumer	@SHIM@/NonNullConsumer
 net/minecraftforge/event/AttachCapabilitiesEvent	@SHIM@/AttachCapabilitiesEvent
 net/minecraftforge/fml/config/ConfigFileTypeHandler	@SHIM@/ConfigFileTypeHandler
 net/minecraftforge/fml/util/ObfuscationReflectionHelper	@SHIM@/ObfuscationReflectionHelper
+# FMLJavaModLoadingContext is forge-only (removed in NeoForge): the @Mod ctor splice
+# rewrites the idiom INSIDE @Mod ctors; every other call site (moonlight's
+# ConfigSpecWrapper) resolves to the shim, which routes getModEventBus() through the
+# active container's real bus (trial 002 phase 5.5).
+net/minecraftforge/fml/javafmlmod/FMLJavaModLoadingContext	@SHIM@/FMLJavaModLoadingContext
 # ForgeRegistries was renamed NeoForgeRegistries INCLUDING its inner-class keys holder
 # (bare-name rule above misses the $-form; same pattern as ForgeConfigSpec$).
 net/minecraftforge/registries/ForgeRegistries$	net/neoforged/neoforge/registries/NeoForgeRegistries$

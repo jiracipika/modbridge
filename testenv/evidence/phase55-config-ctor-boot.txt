@@ -1,0 +1,28 @@
+# phase 5.5 boot evidence — ModConfig ctor wall + config-chain walls fall (2026-10-05)
+
+## translation output (fixture sanity run, before extension boot)
+rules: 10 package, 25 type, 9 member, 1 desc, 48063 srg, 3 retarget, 1 ctor-retarget, 2 method-drops, ... 15 shims
+
+## boot progression (server-121, supp-3.1.38 + moonlight-2.16.10 drop-in)
+
+--- cycle 0: registerConfig retarget applied, next wall = FMLJavaModLoadingContext (translated ConfigSpecWrapper.<init>:73)
+(see git history for prior cycles; final-state stacks below)
+
+--- FINAL walls (both mods past configs clinit; deaths in commonInit)
+[05Oct2026 20:28:43.884] [modloading-worker-0/ERROR] [net.neoforged.fml.javafmlmod.FMLModContainer/LOADING]: Failed to create mod instance. ModID: moonlight, class net.mehvahdjukaar.moonlight.forge.MoonlightForge
+java.lang.NoClassDefFoundError: net/minecraft/world/level/storage/loot/Serializer
+Caused by: java.lang.ClassNotFoundException: net.minecraft.world.level.storage.loot.Serializer
+[05Oct2026 20:28:43.884] [modloading-worker-0/ERROR] [net.neoforged.fml.javafmlmod.FMLModContainer/LOADING]: Failed to create mod instance. ModID: supplementaries, class net.mehvahdjukaar.supplementaries.forge.SupplementariesForge
+java.lang.ExceptionInInitializerError: null
+Caused by: java.lang.IllegalStateException: Cannot get config value before config is loaded.
+java.lang.NoClassDefFoundError: net/minecraft/world/level/storage/loot/Serializer
+	at java.base/jdk.internal.reflect.DirectConstructorHandleAccessor.newInstance(DirectConstructorHandleAccessor.java:62) ~[?:?]
+	at java.base/java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:502) ~[?:?]
+	at java.base/java.lang.reflect.Constructor.newInstance(Constructor.java:486) ~[?:?]
+	at java.base/java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:188) [?:?]
+Caused by: java.lang.IllegalStateException: Cannot get config value before config is loaded.
+	at java.base/java.util.stream.Collectors.lambda$uniqKeysMapAccumulator$1(Collectors.java:180) ~[?:?]
+	at java.base/java.util.stream.ReduceOps$3ReducingSink.accept(ReduceOps.java:169) ~[?:?]
+
+## phase-1 real-mod regression after the 5.5 changes (nanny-1.0.6 + deuf-1.3 + fixture)
+boot: Done (0.586s); both discovered+listed; 0 ERROR/FATAL lines in latest.log; matrix 16/16 after all changes

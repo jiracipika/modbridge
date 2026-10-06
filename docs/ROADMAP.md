@@ -43,20 +43,37 @@ Remaining:
   + an "unresolvable" report (removed APIs needing phase-3 shims)
 - diff mojmap vanilla 1.20.1 vs 1.21.1 for cross-version vanilla member drift
 
-## Phase 3 — shim library
-For semantic (non-mechanical) changes, generate facade classes shipped inside the
-translated jar: old-API-shaped classes delegating to new APIs. Needed for:
-consumed return-type changes, NBT-on-ItemStack → data components bridges,
-SimpleChannel → PayloadRegistrar, RegistryEvent.Register conversions.
+## Phase 3 — shim library — PARTIAL (per-mod carrier live)
+For semantic (non-mechanical) changes, facade classes shipped inside the translated
+jar. LIVE (phase 5/5.5): 15-class per-mod shim carrier (`com/modbridge/shim/<modid>/`,
+JPMS-safe) — capability token chain + LazyOptional, inert AttachCapabilitiesEvent/
+RegisterCapabilitiesEvent, ConfigFileTypeHandler, fail-soft
+ObfuscationReflectionHelper, FMLJavaModLoadingContext (routes getModEventBus() through
+the active container). Plus rule mechanisms that replaced planned shims: ctor-call
+retargets (`rules/ctorretargets.txt` — the ModConfig→ConfigTracker.registerConfig
+rewrite) and method-body drops (`rules/methoddrops.txt`). Still needed: consumed
+return-type bridges, SimpleChannel → PayloadRegistrar, loot Serializer→codec adapters,
+eager-config-load bridge.
 
-## Phase 4 — Mixin support
-Mixin refmaps bind to a specific version's names. Plan: remap mixin configs' targets +
-refmap entries with the version delta, verify each mixin target exists post-translation;
-MixinExtras compat. Probably the single biggest real-mod blocker.
+## Phase 4 — Mixin support — DONE (2026-10-05)
+Refmap remap (SRG→mojmap via the same tables), mixin-annotation string remap,
+drift neutralization against a generated 1.21.1 platform classlist/member inventory,
+injector strictness downgrade, nested-jar dropping, frame-safe @Mod ctor rewrite.
+Zero injection errors on supplementaries+moonlight (see docs/REAL-MOD-TRIAL-002.md).
 
-## Phase 5 — wider vanilla deltas
-Cross-version vanilla API renames/reshapes (entity/level/worldgen APIs changed a lot
-1.20→1.21), event argument changes, enum constant moves, registry alias handling.
+## Phase 5 — wider vanilla deltas — IN PROGRESS (capability facade + config chain DONE)
+Cross-version vanilla API renames/reshapes. DONE (2026-10-05): capability facade
+(ToolAction→ItemAbility retarget, 15-shim carrier), the ModConfig 4-arg ctor wall
+(ctor-retarget to ConfigTracker.registerConfig — exact semantic parity, javap-proven),
+the FMLJavaModLoadingContext chain, the addConfig/getHandler/loadFromFile config
+chain (method drops; configs load via FML's own 21.1 lifecycle from spec defaults).
+REMAINING walls, in fight order (both scoped in docs/REAL-MOD-TRIAL-002.md phase 5.5):
+- loot Serializer→codec adapters (1.21.1 removed the interface; MapCodec world) —
+  semantic per-implementer bridge (moonlight MoonlightRegistry/ModLootConditions)
+- eager config reads (`Cannot get config value before config is loaded`) — design
+  decision: eager-load bridge vs deferred reads
+- networking (SimpleChannel→PayloadRegistrar), FinishedRecipe/loot-serializer datagen
+- client-side SRG coverage (1.20.1 client inventory; inert on dedicated servers)
 
 ## Phase 6 — Fabric
 Different remap stack: Fabric mods ship in **intermediary** names, so translation is
