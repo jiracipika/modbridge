@@ -1688,6 +1688,14 @@ public class Rewriter {
                     f.name = mapSrg(f.name);
                     String renamed = memberRenames.get(f.owner + "|" + f.desc + "|" + f.name);
                     if (renamed != null) { f.name = renamed; memberRenamesApplied++; }
+                    // field retargets (phase 5.10 registry lane): owner+desc swap,
+                    // getstatic/putstatic opcode kept (no itf bit on field refs)
+                    String[] fRetarget = memberRetargets.get(f.owner + "|" + f.desc + "|" + f.name);
+                    if (fRetarget != null) {
+                        f.owner = resolveShimTarget(fRetarget[0]);
+                        f.desc = fRetarget[1];
+                        memberRenamesApplied++;
+                    }
                 }
             }
         }

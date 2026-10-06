@@ -17,6 +17,7 @@ com/modbridge/shim/PacketDistributor
 com/modbridge/shim/PacketDistributor$PacketTarget
 com/modbridge/shim/PacketDistributor$TargetPoint
 com/modbridge/shim/RecordItem
+com/modbridge/shim/RegistryCompat
 com/modbridge/shim/ResourceLocationCompat
 com/modbridge/shim/SimpleChannelCompat
 com/modbridge/shim/Vanishable

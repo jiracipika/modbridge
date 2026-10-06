@@ -78,6 +78,7 @@ public final class CtorRetargetTest {
         interfaceCallSites();
         interfaceInventoryMissingFileTolerated();
         superSwapMechanism();
+        fieldRetargetMechanism();
     }
 
     Rewriter rewriterWithRule() throws IOException {
@@ -506,6 +507,28 @@ public final class CtorRetargetTest {
         check(rs.superSwaps.size() == 1
                         && rs.superSwaps.containsKey("net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment"),
                 "rules/superswaps.txt parses (1 guarded rule)");
+    }
+
+    void fieldRetargetMechanism() throws IOException {
+        Rewriter r = new Rewriter();
+        r.memberRetargets.put("test/Old|Ltest/Val;|FIELD",
+                new String[]{"test/New", "Ltest/NewVal;", "keep"});
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "get", "()Ltest/Val;", null, null);
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC,
+                "test/Old", "FIELD", "Ltest/Val;"));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        r.applyMemberRenames(cn);
+        FieldInsnNode fi = first(mn, FieldInsnNode.class, f -> true);
+        check(fi != null && fi.owner.equals("test/New") && fi.desc.equals("Ltest/NewVal;"),
+                "field retarget swaps owner+desc, opcode kept");
+        check(r.memberRenamesApplied == 1, "field retarget counter = 1");
     }
 
     String applySuperSwapIn(Rewriter r, String className, String superName) {

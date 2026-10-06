@@ -231,3 +231,12 @@ net/minecraft/world/item/enchantment/EnchantmentCategory	@SHIM@/EnchantmentCateg
 # (client-only) getColor/hasCustomColor. INERT defaults (no component store bridged).
 net/minecraft/world/item/DyeableItem	@SHIM@/DyeableItem
 net/minecraft/world/item/DyeableLeatherItem	@SHIM@/DyeableLeatherItem
+
+# --- registry lane (phase 5.10): forge's IForgeRegistry wrapper interface is GONE;
+# 21.1 receivers are the vanilla net.minecraft.core.Registry interface (exists,
+# inventoried). Typerename fixes moonlight's OWN method descriptors + the field
+# descs; the FIELD OWNER refinement (ForgeRegistries vanilla keys -> BuiltInRegistries,
+# singular names) + the drifted members ride memberretargets below. getSlaveMap
+# (forge POI holder map) + getValues (client-only lambdas) have no 21.1 counterpart:
+# runtime walls, documented, NOT ruled.
+net/minecraftforge/registries/IForgeRegistry	net/minecraft/core/Registry
