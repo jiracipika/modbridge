@@ -1,6 +1,7 @@
 com/modbridge/shim/AbstractIngredient
 com/modbridge/shim/ArmorItemCompat
 com/modbridge/shim/ArmorMaterialCompat
+com/modbridge/shim/BucketItemCompat
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
 com/modbridge/shim/DoorBlockCompat
@@ -11,6 +12,7 @@ com/modbridge/shim/EnchantmentCategory
 com/modbridge/shim/EnchantmentCompat
 com/modbridge/shim/EntityItemPickupEvent
 com/modbridge/shim/EntityItemPickupEvent$Result
+com/modbridge/shim/EntryWrapperCompat
 com/modbridge/shim/FenceGateBlockCompat
 com/modbridge/shim/GravelBlock
 com/modbridge/shim/IIngredientSerializer

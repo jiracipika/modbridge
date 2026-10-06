@@ -88,3 +88,16 @@ net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IFo
 # instance shape - the 21.1 Registry has no such instance member (register is a
 # static returning the value). Same RegistryCompat receiver-prepended wrapper.
 net/minecraft/core/Registry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|static
+
+# --- items lane (phase 5.11): BucketItem (Supplier,Properties) -> (Fluid,Properties)
+# drift; LumiseneBucketItem's super-call carries the 1.20.1 shape (moonlight's
+# ModBucketItem already 21.1-shaped). Superswap (rules/superswaps.txt) not needed -
+# the swap must carry the CALL desc: handled there.
+
+# --- registry lane, EntryWrapper query side (phase 5.11, live-boot wall:
+# DeferredHolder "Trying to access unbound value" at supp RegUtils.registerPlacements
+# <- moonlight EntryWrapper.get() -> RegistryObject.get() [typerenamed to
+# DeferredHolder.get()] - holders bind ONLY through the event helper, never for
+# direct-registered entries). Static-kind receiver-prepended shim doing a DIRECT
+# registry lookup via the holder's key (1.20.1 eager semantics).
+net/mehvahdjukaar/moonlight/api/platform/forge/RegHelperImpl$EntryWrapper|()Ljava/lang/Object;|get -> @SHIM@/EntryWrapperCompat|(Lnet/mehvahdjukaar/moonlight/api/platform/forge/RegHelperImpl$EntryWrapper;)Ljava/lang/Object;|static

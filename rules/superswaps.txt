@@ -62,3 +62,8 @@ net/mehvahdjukaar/supplementaries/common/items/forge/ShulkerShellItem$SkulkerShe
 # (extends plain Item, carries the call-site desc, ignores the material) - the
 # item constructs; armor behavior NOT claimed.
 net/mehvahdjukaar/supplementaries/common/items/forge/ShulkerShellItem|net/minecraft/world/item/ArmorItem -> @SHIM@/ArmorItemCompat
+
+# Items lane (phase 5.11): BucketItem ctor supplier->value drift (same family as
+# LiquidBlock; measured: supp LumiseneBucketItem super-call (Supplier,Properties);
+# moonlight ModBucketItem already 21.1-shaped).
+net/mehvahdjukaar/supplementaries/common/items/LumiseneBucketItem|net/minecraft/world/item/BucketItem -> @SHIM@/BucketItemCompat
