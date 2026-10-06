@@ -1,3 +1,4 @@
+com/modbridge/shim/DataResultCompat
 com/modbridge/shim/ObfuscationReflectionHelper
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec

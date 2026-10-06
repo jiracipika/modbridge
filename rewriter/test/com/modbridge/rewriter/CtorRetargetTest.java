@@ -68,6 +68,9 @@ public final class CtorRetargetTest {
         unresolvedShimOwnerFailsFast();
         realRuleFileLoads();
         realRuleFileResolvesThroughShim();
+        staticKindMemberRetargets();
+        staticKindUnruledShapeUntouched();
+        realMemberRetargetsLoad();
         methodDrops();
         realMethodDropsLoad();
         interfaceCallSites();
@@ -308,6 +311,120 @@ public final class CtorRetargetTest {
                         && m.getOpcode() == Opcodes.INVOKEVIRTUAL
                         && m.owner.startsWith("com/modbridge/shim/moonlight/")) == 1,
                 "shipped rule lands on the per-mod ModConfigBridge");
+    }
+
+    // ------------------------------------------- memberretargets "static" kind (phase 5.9)
+
+    /** one call site per drifted DFU 6->8 member shape (the phase-5.8 boot wall) */
+    ClassNode dataResultHost() {
+        ClassNode cn = new ClassNode();
+        cn.name = "test/DataResultHost";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "use", "(Lcom/mojang/serialization/DataResult;ZLjava/util/function/Consumer;)Ljava/lang/Object;", null, null);
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new VarInsnNode(Opcodes.ILOAD, 2));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 3));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult", "getOrThrow",
+                "(ZLjava/util/function/Consumer;)Ljava/lang/Object;", false));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        MethodNode mn2 = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "split", "(Lcom/mojang/serialization/DataResult;)Ljava/lang/Object;", null, null);
+        mn2.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn2.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult", "get",
+                "()Lcom/mojang/datafixers/util/Either;", false));
+        mn2.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn2);
+        MethodNode mn3 = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "msg", "(Ljava/lang/Object;)Ljava/lang/String;", null, null);
+        mn3.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn3.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult$PartialResult", "message",
+                "()Ljava/lang/String;", false));
+        mn3.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn3);
+        return cn;
+    }
+
+    void staticKindMemberRetargets() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        r.initShimRoot("testmod");
+        ClassNode cn = dataResultHost();
+        r.applyMemberRenames(cn);
+        String shimOwner = "com/modbridge/shim/testmod/DataResultCompat";
+        MethodInsnNode got = first(cn.methods.get(0), MethodInsnNode.class,
+                m -> "getOrThrow".equals(m.name));
+        check(r.memberRenamesApplied == 3, "all three drifted shapes retargeted (counter=3)");
+        check(got != null && got.getOpcode() == Opcodes.INVOKESTATIC,
+                "getOrThrow(Z,Consumer) site became INVOKESTATIC");
+        check(got.owner.equals(shimOwner), "getOrThrow owner = per-mod DataResultCompat");
+        check(got.desc.equals("(Lcom/mojang/serialization/DataResult;ZLjava/util/function/Consumer;)Ljava/lang/Object;"),
+                "getOrThrow desc = receiver-prepended adapter shape");
+        check(!got.itf, "getOrThrow site not flagged itf");
+        MethodInsnNode get = first(cn.methods.get(1), MethodInsnNode.class,
+                m -> "get".equals(m.name));
+        check(get != null && get.getOpcode() == Opcodes.INVOKESTATIC && get.owner.equals(shimOwner),
+                "get() site became INVOKESTATIC on the shim");
+        check(get.desc.equals("(Lcom/mojang/serialization/DataResult;)Lcom/mojang/datafixers/util/Either;"),
+                "get() desc = receiver-prepended, erased Either return");
+        MethodInsnNode msg = first(cn.methods.get(2), MethodInsnNode.class,
+                m -> "message".equals(m.name));
+        check(msg != null && msg.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && msg.owner.equals("com/mojang/serialization/DataResult$Error"),
+                "PartialResult.message owner-retargeted to the Error record");
+        check(msg.desc.equals("()Ljava/lang/String;") && !msg.itf,
+                "message keeps its erased desc and virtual kind");
+        // shim manifest must carry the adapter (injected per-jar, relocated)
+        check(r.shims.containsKey("com/modbridge/shim/DataResultCompat"),
+                "DataResultCompat present in the shim manifest");
+    }
+
+    void staticKindUnruledShapeUntouched() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        r.initShimRoot("testmod");
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Unruled";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "noArg", "(Lcom/mojang/serialization/DataResult;)Ljava/lang/Object;", null, null);
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult", "getOrThrow",
+                "()Ljava/lang/Object;", false));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        r.applyMemberRenames(cn);
+        MethodInsnNode iv = first(mn, MethodInsnNode.class, m -> "getOrThrow".equals(m.name));
+        check(r.memberRenamesApplied == 0, "unruled desc left alone (counter=0)");
+        check(iv != null && iv.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && iv.owner.equals("com/mojang/serialization/DataResult"),
+                "no-arg getOrThrow stays a DataResult virtual (21.1 default member)");
+    }
+
+    /** the shipped memberretargets.txt must parse and hold the three new shapes */
+    void realMemberRetargetsLoad() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        check(r.memberRetargets.size() == 6, "rules/memberretargets.txt loads (3 setCanceled + 3 DFU drift)");
+        String[] val = r.memberRetargets.get(
+                "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow");
+        check(val != null && val[0].equals("@SHIM@/DataResultCompat") && "static".equals(val[2]),
+                "static-kind getOrThrow rule present with @SHIM@ target");
+        check(r.memberRetargets.containsKey(
+                "com/mojang/serialization/DataResult|()Lcom/mojang/datafixers/util/Either;|get"),
+                "static-kind get() rule present");
+        check(r.memberRetargets.containsKey(
+                "com/mojang/serialization/DataResult$PartialResult|()Ljava/lang/String;|message"),
+                "PartialResult.message owner-retarget rule present");
     }
 
     /** rules/methoddrops.txt must parse and hold the two ConfigSpecWrapper drops */

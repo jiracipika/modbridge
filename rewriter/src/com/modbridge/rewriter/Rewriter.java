@@ -1606,11 +1606,19 @@ public class Rewriter {
                     if (renamed != null) { m.name = renamed; memberRenamesApplied++; }
                     String[] retarget = memberRetargets.get(m.owner + "|" + m.desc + "|" + m.name);
                     if (retarget != null) {
-                        m.owner = retarget[0];
+                        m.owner = resolveShimTarget(retarget[0]);
                         m.desc = retarget[1];
-                        boolean itf = "interface".equals(retarget[2]);
-                        m.setOpcode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL);
-                        m.itf = itf;
+                        if ("static".equals(retarget[2])) {
+                            // member removed on 21.1, bridged by a per-mod shim whose
+                            // first parameter IS the receiver: same pops/pushes, frames
+                            // untouched (DFU 6->8 DataResult.getOrThrow(Z,Consumer)/get)
+                            m.setOpcode(Opcodes.INVOKESTATIC);
+                            m.itf = false;
+                        } else {
+                            boolean itf = "interface".equals(retarget[2]);
+                            m.setOpcode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL);
+                            m.itf = itf;
+                        }
                         memberRenamesApplied++;
                     }
                     applyDescRewrite(cn, mn, m);
