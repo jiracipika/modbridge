@@ -420,6 +420,8 @@ public final class ShimFacadeTest {
         check(ti instanceof net.minecraft.advancements.critereon.SimpleCriterionTrigger.SimpleInstance,
                 "translated-style subclass: IS-A SimpleInstance");
         check(ti.player().isEmpty(), "player(): null predicate -> Optional.empty (null-safe)");
+    }
+
     // --------------------------------------------------- DFU-drift adapter (phase 5.9)
 
     /**
