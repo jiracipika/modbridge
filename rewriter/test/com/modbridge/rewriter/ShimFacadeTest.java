@@ -175,6 +175,21 @@ public final class ShimFacadeTest {
                 && addCap.getParameterTypes()[1] == ICapabilityProvider.class,
                 "AttachCapabilitiesEvent.addCapability(cap provider) shape");
 
+        // eager-config slice: the ModConfigBridge surface the ctor-retarget rule emits
+        // (erased desc must equal rules/ctorretargets.txt's newMethodDesc exactly)
+        Class<?> bridge = net.neoforged.fml.config.ModConfigBridge.class;
+        Method ral = methodNamed(bridge, "registerAndLoad", 4);
+        check(ral.getReturnType() == net.neoforged.fml.config.ModConfig.class,
+                "ModConfigBridge.registerAndLoad returns the real 21.1 ModConfig");
+        check(net.neoforged.fml.config.ModConfigBridge.class.getField("INSTANCE")
+                        .getType() == bridge,
+                "ModConfigBridge.INSTANCE: public receiver field for the GETSTATIC rewrite");
+        check(desc(bridge, "registerAndLoad").equals(
+                        "(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;"
+                                + "Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)"
+                                + "Lnet/neoforged/fml/config/ModConfig;"),
+                "ModConfigBridge.registerAndLoad desc == the retarget rule's newMethodDesc");
+
         // compile-time platform-free: check the base by name (runtime resolution happens
         // under test-shims.sh's platform classpath)
         check(net.neoforged.neoforge.event.AttachCapabilitiesEvent.class.getSuperclass() != null
@@ -230,7 +245,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 15, "rules/shims: manifest loads 15 shim classes (incl. ForgeCapabilities tokens + FMLJavaModLoadingContext)");
+        check(r.shims.size() == 16, "rules/shims: manifest loads 16 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -252,7 +267,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 15, "injectShims(): all 15 shims present under the per-mod package");
+        check(entries.size() == 16, "injectShims(): all 16 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

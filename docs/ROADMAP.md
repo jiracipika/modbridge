@@ -52,8 +52,12 @@ ObfuscationReflectionHelper, FMLJavaModLoadingContext (routes getModEventBus() t
 the active container). Plus rule mechanisms that replaced planned shims: ctor-call
 retargets (`rules/ctorretargets.txt` — the ModConfig→ConfigTracker.registerConfig
 rewrite) and method-body drops (`rules/methoddrops.txt`). Still needed: consumed
-return-type bridges, SimpleChannel → PayloadRegistrar, loot Serializer→codec adapters,
-eager-config-load bridge.
+return-type bridges, SimpleChannel → PayloadRegistrar, loot Serializer→codec adapters.
+(DONE, eager-config slice 2026-10-05: the eager-config-load bridge — the ctor-retarget
+now lands on the per-mod ModConfigBridge shim, which registers through
+ConfigTracker.registerConfig AND eagerly runs ConfigTracker.loadConfigs(COMMON,
+CONFIGDIR) so construction-time reads return file/spec-default values — the 1.20.1
+timing moonlight's dropped loadFromFile used to provide.)
 
 ## Phase 4 — Mixin support — DONE (2026-10-05)
 Refmap remap (SRG→mojmap via the same tables), mixin-annotation string remap,
@@ -70,8 +74,8 @@ chain (method drops; configs load via FML's own 21.1 lifecycle from spec default
 REMAINING walls, in fight order (both scoped in docs/REAL-MOD-TRIAL-002.md phase 5.5):
 - loot Serializer→codec adapters (1.21.1 removed the interface; MapCodec world) —
   semantic per-implementer bridge (moonlight MoonlightRegistry/ModLootConditions)
-- eager config reads (`Cannot get config value before config is loaded`) — design
-  decision: eager-load bridge vs deferred reads
+- eager config reads — DONE (eager-config slice 2026-10-05): ModConfigBridge shim
+  eager-loads COMMON configs at registration; see docs/REAL-MOD-TRIAL-002.md
 - networking (SimpleChannel→PayloadRegistrar), FinishedRecipe/loot-serializer datagen
 - client-side SRG coverage (1.20.1 client inventory; inert on dedicated servers)
 

@@ -464,3 +464,105 @@ Final walls — the next (b)-layer, both in the mods' own commonInit:
 - The two new walls are (b)-layer: both need semantic bridges (codec adapters /
   eager-load design), not mechanical rules. They are the scoped opener for the next
   slice, ahead of networking (SimpleChannel) and the remaining datagen surfaces.
+
+# Eager-config slice: construction-time config reads return real values (2026-10-05)
+
+The phase-5.5 "next wall" — `IllegalStateException: Cannot get config value before
+config is loaded.` from the REAL 21.1 `ModConfigSpec$ConfigValue.getRaw` — is fixed.
+Both configs clinit and the mod-ctor-chain reads now see file values (spec defaults on
+first run), through the 21.1 platform's own loading pipeline.
+
+## Ground truth (all javap'd, loader 4.0.44 + universal 21.1.250 + bus 8.0.5)
+
+- 21.1 order: mods CONSTRUCT first (where `new ModConfig` sites register configs), the
+  "Config loading" init task (`CommonModLoader.begin` → `ConfigTracker.loadConfigs`)
+  runs AFTER all constructions, common setup later still. 1.20.1 order: moonlight's
+  `ConfigSpecWrapper.<init>` eagerly loaded files during registration (loadFromFile),
+  so reads in mod construction worked.
+- The measured death is INSIDE `CommonConfigs` clinit, not a lazy read:
+  `ConfigSpecWrapper`'s own ctor unconditionally builds `requireRestartValues` via
+  `stream().collect(toMap(identity, ConfigValue::get))` (BootstrapMethods #4/#5) —
+  `ConfigValue.get()` → `getRaw` → `Preconditions.checkState(loadedConfig != null)`.
+  The phase-5.5 boot stack's `Collectors.lambda$uniqKeysMapAccumulator` frame is
+  exactly this toMap. `getRaw` throws until `ModConfig.setConfig` runs
+  `IConfigSpec.acceptConfig` — i.e. until loadConfigs opens the config.
+- Read surface: supplementaries defines 245 config values (12 config classes; 152
+  classes read `CommonConfigs`) through moonlight Supplier wrappers over
+  `ForgeConfigSpec$ConfigValue`. There is exactly ONE translated `new ModConfig` site
+  in both jars (ConfigSpecWrapper.<init>:75) — the single choke point.
+
+## What was built
+
+1. **`ModConfigBridge` shim** (16th carrier class, per-mod package): the
+   ctor-retarget rule's new target. `registerAndLoad(Type, IConfigSpec, ModContainer,
+   String)` = `ConfigTracker.INSTANCE.registerConfig(...)` (phase-5.5 semantics kept:
+   ctor + validateSpec + trackConfig + eager open for STARTUP), then — COMMON type
+   only — `ConfigTracker.INSTANCE.loadConfigs(COMMON, FMLPaths.CONFIGDIR.get())`.
+   CLIENT configs are never eager-loaded (a dedicated server does not load them —
+   same on both platforms); SERVER stays on FML's lifecycle.
+2. **`@SHIM@` owners in ctorretargets.txt** (rewriter): `rewriteCtorRetargets`
+   resolves rule owner `@SHIM@/<SimpleName>` to the per-mod shim package via the
+   existing `resolveShimTarget` (manifest-missing = translation fails fast). Rule
+   format unchanged (GETSTATIC+INVOKEVIRTUAL shape — the shim exposes a public
+   `INSTANCE` receiver field).
+
+## Trade-offs accepted (documented in the shim's javadoc + rule comments)
+
+- loadConfigs is per-TYPE: it opens EVERY tracked COMMON config, not just this mod's.
+  Native mods' earlier-registered configs load early; when FML runs its own
+  loadConfigs pass, `openConfig` re-opens them (WARN log line + a SECOND
+  `ModConfigEvent$Loading` per config). Reload semantics listeners must already
+  tolerate (FileWatcher does the same); the FileWatcher re-watch is a `Map.put`
+  replace in nightconfig 3.8.3 (no exception).
+- The early ModConfigEvent fires before the owning ctor's own listeners register
+  (the retarget sits a few instructions before `addListener` in ConfigSpecWrapper):
+  absorbed; FML's real pass delivers it. Derived eager fields (supp's
+  `stasisEnabled`) update at FML's pass, so ctor-chain reads of PLAIN fields keep
+  their clinit defaults — the accepted "values = defaults until FML's real load"
+  semantic for non-Supplier state.
+- Concurrent translated-mod constructions may call loadConfigs concurrently:
+  per-config locks (registerConfig's locksByMod ReentrantLock) serialize setConfig;
+  ConfigTracker structures are concurrent; last writer wins.
+
+## The phase-5.5 IConfigEvent landmine — already defused, proven
+
+javap of the RAW jar shows the ctor's addListener consumers are METHOD REFS, not
+IConfigEvent lambdas: `onConfigChange(ModConfigEvent)`, `onPlayerLoggedIn/Out`. The
+remapped BootstrapMethods targets are the REAL 21.1 classes
+(`net/neoforged/fml/event/config/ModConfigEvent` has `getConfig()`;
+`net/neoforged/neoforge/event/entity/player/PlayerEvent$*`), so the runtime lambda
+checkcast + the bus's TypeResolver inference (`net.jodah.typetools` on the serialized
+lambda — EventBus.getEventClass) resolve. The ONLY `IConfigEvent` constant-pool
+reference in either raw jar is inside the already method-dropped `loadFromFile` —
+zero live references in both translated jars (proven offline). No shim, no extra
+methoddrops needed.
+
+## Gates (offline only — live boot owned by the main session)
+
+- unit: test-ctor-retarget.sh 3/3 (42 checks: +@SHIM@ owner resolution, +fail-fast on
+  unknown manifest entry, rule-file assertions updated; the test's NEW_DESC constant
+  was raw-space-typed and is now the true final-space desc), test-shims.sh 3/3
+  (66 checks; shim count 15→16), refmap 3/3, srg-resolver 4/4.
+- fixture sanity: ctor retargets=0, method drops=0 (rules inert where they should be).
+- offline proof (scripts in the evidence file): ctor sites route through
+  `com/modbridge/shim/moonlight/ModConfigBridge.registerAndLoad`; bridge body =
+  registerConfig + conditional loadConfigs(COMMON, CONFIGDIR); zero IConfigEvent refs
+  in both output jars (testenv/evidence/phase555-eager-config-offline-proof.txt).
+
+## Honest caveats / next walls
+
+- Config PERSISTENCE semantics unchanged (documented no-op write-back); values now
+  load from the existing toml or spec defaults at registration, and FML re-loads
+  (correcting) at its own pass.
+- `ModContainer.acceptEvent` null-guards the bus, so the early event is safe even for
+  containers without a bus yet.
+- moonlight's databuddy API `ConfigHelper.register(...)` calls the REMOVED
+  `ModLoadingContext.registerConfig` (javap-verified gone on 21.1) — unused by
+  moonlight/supplementaries construction, but any future mod calling it needs a
+  memberretarget to `ModContainer.registerConfig` + this bridge. Out of measured scope.
+- Expected next wall (unchanged from phase 5.5): moonlight commonInit's loot
+  `Serializer` NCDFE — the codec-adapter bridge, and then networking
+  (SimpleChannel→PayloadRegistrar). The early ModConfigEvent now arms moonlight's
+  synced-config path (`sendSyncedConfigsToAllPlayers` → networking classes) at FML's
+  real load pass, but it iterates an empty player list at boot time, so no networking
+  class resolves there yet.
