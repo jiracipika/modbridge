@@ -10,3 +10,12 @@ net/minecraft/commands/CommandSourceStack|sendSuccess|(Ljava/util/function/Suppl
 # retargets the OWNER to ArmorItemCompat (whose ctor takes Object); this desc rule
 # makes the ARG verify. Original-space key (applyMemberRenames runs pre-remapClass).
 net/minecraft/world/item/ArmorItem|<init>|(Lnet/minecraft/world/item/ArmorMaterial;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V=(Ljava/lang/Object;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V
+# --- effects lane (phase 5.11): the holder rework - MobEffectInstance ctors take
+# Holder<MobEffect> on 21.1 and getEffect() returns Holder. Desc rewrites make the
+# whole local type-flow Holder-consistent with the MobEffects field retargets.
+# Keys are original-space (owner same name both versions; name post-mapSrg).
+net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;I)V=(Lnet/minecraft/core/Holder;I)V
+net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;II)V=(Lnet/minecraft/core/Holder;II)V
+net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;IIZZ)V=(Lnet/minecraft/core/Holder;IIZZ)V
+net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;IIZZZ)V=(Lnet/minecraft/core/Holder;IIZZZ)V
+net/minecraft/world/effect/MobEffectInstance|getEffect|()Lnet/minecraft/world/effect/MobEffect;=()Lnet/minecraft/core/Holder;

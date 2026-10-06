@@ -114,3 +114,9 @@ net/minecraftforge/registries/RegistryObject|()Ljava/lang/Object;|get -> @SHIM@/
 # (holder rework). Field retargets with desc change (name same); CONSUMER methods
 # on the holder values are the next measured walls (getEffect() drift family).
 net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|GLOWING -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|GLOWING
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|UNLUCK -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|UNLUCK
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|MOVEMENT_SPEED -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|MOVEMENT_SPEED
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|CONFUSION -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|CONFUSION
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|INVISIBILITY -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|INVISIBILITY
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|WEAKNESS -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|WEAKNESS
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|POISON -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|POISON
