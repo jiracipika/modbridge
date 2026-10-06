@@ -17,3 +17,12 @@ net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment|net/minecraft/wo
 # implement a non-interface (ICCE at define). Runtime-path class; the strip is
 # boot-only relief (minecart dispensing NOT claimed).
 net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/MovingBlockSource|interface:net/minecraft/core/dispenser/BlockSource -> REMOVE
+
+# DoorBlock ctor drift (blocks lane, phase 5.11): 1.21 swapped DoorBlock's ctor to
+# (BlockSetType, Properties) PROTECTED (1.20.1: (Properties, BlockSetType) public) -
+# translated subclasses' super-calls NSME. Superswap to the DoorBlockCompat carrier
+# (extends the REAL 21.1 DoorBlock, carries the 1.20.1 ctor shape, forwards with the
+# swapped order - the plumbing retarget keeps the call-site desc, so the caller's
+# explicit BlockSetType (GOLD/IRON) passes through with full type fidelity).
+net/mehvahdjukaar/supplementaries/common/block/blocks/GoldDoorBlock|net/minecraft/world/level/block/DoorBlock -> @SHIM@/DoorBlockCompat
+net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteDoorBlock|net/minecraft/world/level/block/DoorBlock -> @SHIM@/DoorBlockCompat

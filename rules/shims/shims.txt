@@ -1,6 +1,7 @@
 com/modbridge/shim/AbstractIngredient
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
+com/modbridge/shim/DoorBlockCompat
 com/modbridge/shim/DyeableItem
 com/modbridge/shim/DyeableLeatherItem
 com/modbridge/shim/Enchantment$Rarity
