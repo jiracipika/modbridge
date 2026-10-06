@@ -12,7 +12,9 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
@@ -77,6 +79,7 @@ public final class CtorRetargetTest {
         realMethodDropsLoad();
         interfaceCallSites();
         interfaceInventoryMissingFileTolerated();
+        indySamNameRemap();
         superSwapMechanism();
         fieldRetargetMechanism();
     }
@@ -456,6 +459,67 @@ public final class CtorRetargetTest {
         check(iv != null && iv.getOpcode() == Opcodes.INVOKEVIRTUAL
                         && iv.owner.equals("com/mojang/serialization/DataResult"),
                 "no-arg getOrThrow stays a DataResult virtual (21.1 default member)");
+    }
+
+    // ------------------------------------------- indy SAM-name remap (shapes lane)
+
+    void indySamNameRemap() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Indy";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "use", "(Lnet/minecraft/world/phys/shapes/VoxelShape;)V", null, null);
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new InvokeDynamicInsnNode("m_83161_",
+                "(DLnet/minecraft/core/Direction;)Lnet/minecraft/world/phys/shapes/Shapes$DoubleLineConsumer;",
+                new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+                        "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                                + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;"
+                                + "Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;"
+                                + ")Ljava/lang/invoke/CallSite;", false),
+                new Object[]{Opcodes.ASM9, org.objectweb.asm.Type.getType("(DDDDDD)V"),
+                        new Handle(Opcodes.H_INVOKESTATIC, "test/Indy", "lambda$use$0",
+                                "(DLnet/minecraft/core/Direction;DDDDD)V", false),
+                        org.objectweb.asm.Type.getType("(DDDDDD)V")}));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/phys/shapes/VoxelShape", "forAllBoxes",
+                "(Lnet/minecraft/world/phys/shapes/Shapes$DoubleLineConsumer;)V", false));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.remapClass(cn);
+        InvokeDynamicInsnNode id = first(mn, InvokeDynamicInsnNode.class, x -> true);
+        check(id != null && id.name.equals("consume"),
+                "indy SAM name remapped m_83161_ -> consume (metafactory implements the right method)");
+        check(id.desc.contains("Shapes$DoubleLineConsumer"),
+                "indy desc type untouched (same name both versions)");
+        // java-interface lambdas pass through untouched
+        ClassNode cn2 = new ClassNode();
+        cn2.name = "test/Indy2";
+        cn2.version = Opcodes.V17;
+        cn2.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn2.superName = "java/lang/Object";
+        MethodNode mn2 = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "run", "(Ljava/lang/Runnable;)V", null, null);
+        mn2.instructions.add(new InvokeDynamicInsnNode("run", "(Ljava/lang/Runnable;)V",
+                new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+                        "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                                + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;"
+                                + "Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;"
+                                + ")Ljava/lang/invoke/CallSite;", false),
+                new Object[]{Opcodes.ASM9, org.objectweb.asm.Type.getType("()V"),
+                        new Handle(Opcodes.H_INVOKESTATIC, "test/Indy2", "lambda$run$0",
+                                "()V", false),
+                        org.objectweb.asm.Type.getType("()V")}));
+        mn2.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn2.methods.add(mn2);
+        r.remapClass(cn2);
+        InvokeDynamicInsnNode id2 = first(mn2, InvokeDynamicInsnNode.class, x -> true);
+        check(id2 != null && id2.name.equals("run"),
+                "non-SRG indy names pass through (java-interface lambdas unaffected)");
     }
 
     // ------------------------------------------- superswap pass (enchantment lane)

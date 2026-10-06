@@ -1860,6 +1860,14 @@ public class Rewriter {
             } else if (n instanceof LdcInsnNode l && l.cst instanceof Type ty) {
                 l.cst = Type.getType(remapDesc(ty.getDescriptor()));
             } else if (n instanceof InvokeDynamicInsnNode id) {
+                // the indy NAME is the implemented SAM method name: lambdas over
+                // VANILLA functional interfaces (Shapes$DoubleLineConsumer.consume,
+                // DiscreteVoxelShape$IntLineConsumer, ...) carry 1.20.1 SRG ids there
+                // and the metafactory generates the lambda method under that name ->
+                // AbstractMethodError at dispatch ("does not define or inherit an
+                // implementation of the resolved method 'consume'"). Java-interface
+                // lambdas (accept/apply/get) are unaffected (names never SRG).
+                id.name = mapSrg(id.name);
                 id.desc = remapDesc(id.desc);
                 if (id.bsm != null) id.bsm = remapHandle(id.bsm);
                 if (id.bsmArgs != null) {
