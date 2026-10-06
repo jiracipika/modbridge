@@ -42,3 +42,15 @@ net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteTrapdoorBlock|net
 # its lazy suppliers itself). UNCHANGED parents: DiodeBlock/BaseFireBlock/
 # ConcretePowderBlock/CropBlock/BlockEntity family.
 net/mehvahdjukaar/supplementaries/common/block/blocks/IronGateBlock|net/minecraft/world/level/block/FenceGateBlock -> @SHIM@/FenceGateBlockCompat
+
+# Armor lane (phase 5.11): ArmorMaterial INTERFACE -> final RECORD on 21.1; the
+# implementer cannot DEFINE. Interface-SWAP form: "interface:<remapped-name> ->
+# <shim-interface>" replaces the entry with a shim carrying the 1.20.1 surface.
+# (Values other than REMOVE resolve through the shim manifest.)
+net/mehvahdjukaar/supplementaries/common/items/forge/ShulkerShellItem$SkulkerShellArmorMaterial|interface:net/minecraft/world/item/ArmorMaterial -> @SHIM@/ArmorMaterialCompat
+
+# Minecart dispenser (phase 5.11): MovingBlockSource can never BE the 21.1
+# BlockSource (final record) - the interface-strip fixed its definition but the
+# USE SITE (DispenserMinecartEntity.dispenseFrom passing it as a BlockSource to
+# DispenseItemBehavior.dispense) fails verification. Minecart dispensing RUNTIME is
+# not claimed; drop the dispatch method so the class loads (boot).

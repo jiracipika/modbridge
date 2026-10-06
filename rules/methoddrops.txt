@@ -25,3 +25,7 @@ net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|loa
 # Ingredient - Ingredient is FINAL on 21.1 so no shim can restore the IS-A chain),
 # and an unloaded class never verifies. Void return = stack-shape safe.
 net/mehvahdjukaar/moonlight/api/resources/recipe/BlockTypeSwapIngredient|()V|init
+# phase 5.11: minecart dispenser dispatch (see superswaps.txt) - MovingBlockSource
+# cannot be a 21.1 BlockSource (final record); dropping dispenseFrom keeps the
+# entity class loadable at registration. Runtime not claimed.
+net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/DispenserMinecartEntity|(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/core/BlockPos;)V|dispenseFrom
