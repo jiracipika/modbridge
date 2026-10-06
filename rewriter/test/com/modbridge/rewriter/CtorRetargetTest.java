@@ -23,11 +23,12 @@ import org.objectweb.asm.tree.VarInsnNode;
 /**
  * Pure-logic tests for the ctor-retarget pass (scripts/test-ctor-retarget.sh):
  * NEW+DUP+INVOKESPECIAL surgery against rules/ctorretargets.txt — the ModConfig ->
- * ConfigTracker.registerConfig retarget that unblocks moonlight's ConfigSpecWrapper
- * (trial 002 phase 5.5). Covers the straight-line site, frames inside the ctor-arg
- * region (a branch among the args names the uninitialized ref in two NEW+DUP slots,
- * which collapse to one receiver entry), the nested-new scan-stop, no-rule ctors left
- * untouched, and rule parsing against the shipped rule file.
+ * per-mod ModConfigBridge shim retarget that unblocks moonlight's ConfigSpecWrapper
+ * (trial 002 phase 5.5 + the eager-config slice). Covers the straight-line site,
+ * frames inside the ctor-arg region (a branch among the args names the uninitialized
+ * ref in two NEW+DUP slots, which collapse to one receiver entry), the nested-new
+ * scan-stop, no-rule ctors left untouched, @SHIM@ rule owners resolving to the
+ * per-mod shim package, and rule parsing against the shipped rule file.
  */
 public final class CtorRetargetTest {
 
@@ -37,9 +38,11 @@ public final class CtorRetargetTest {
     static final String OLD_DESC =
             "(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;"
                     + "Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)V";
+    /** final-space factory desc (inserted names are NOT remapped — the shipped rule
+     *  carries 21.1 types; the pre-eager-config constant had a raw-space Type arg) */
     static final String NEW_DESC =
-            "(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;"
-                    + "Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;";
+            "(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;"
+                    + "Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;";
 
     int passed = 0;
 
@@ -61,7 +64,10 @@ public final class CtorRetargetTest {
         framesInsideArgRegion();
         nestedNewUntouched();
         otherCtorDescUntouched();
+        shimOwnerResolution();
+        unresolvedShimOwnerFailsFast();
         realRuleFileLoads();
+        realRuleFileResolvesThroughShim();
         methodDrops();
         realMethodDropsLoad();
     }
@@ -243,9 +249,63 @@ public final class CtorRetargetTest {
                 .toList();
         r.addCtorRetargetRules(lines);
         check(r.ctorRetargets.size() == 1, "rules/ctorretargets.txt parses (1 rule)");
-        check(r.ctorRetargets.get(OLD_OWNER + "|" + OLD_DESC) != null,
-                "ModConfig 4-arg ctor rule present");
+        String[] rule = r.ctorRetargets.get(OLD_OWNER + "|" + OLD_DESC);
+        check(rule != null, "ModConfig 4-arg ctor rule present");
+        check(rule != null && "@SHIM@/ModConfigBridge".equals(rule[0])
+                        && "INSTANCE".equals(rule[1])
+                        && "registerAndLoad".equals(rule[2])
+                        && NEW_DESC.equals(rule[3]),
+                "rule targets the ModConfigBridge shim (eager-config slice)");
         check(r.ctorRetargetOwners.contains(OLD_OWNER), "owner pre-scan index populated");
+    }
+
+    /** a @SHIM@ rule owner must land on the per-mod shim package in rewritten bytecode */
+    void shimOwnerResolution() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        r.initShimRoot("moonlight");
+        ClassNode cn = branchyHost();
+        r.rewriteCtorRetargets(cn);
+        MethodNode mn = cn.methods.get(0);
+        String shimOwner = "com/modbridge/shim/moonlight/ModConfigBridge";
+        FieldInsnNode gs = first(mn, FieldInsnNode.class,
+                f -> f.getOpcode() == Opcodes.GETSTATIC && shimOwner.equals(f.owner));
+        check(r.ctorRetargetsApplied == 1, "shim-ruled site retargeted");
+        check(gs != null && "INSTANCE".equals(gs.name)
+                        && ("L" + shimOwner + ";").equals(gs.desc),
+                "@SHIM@ rule owner resolved to the per-mod shim package");
+        MethodInsnNode iv = first(mn, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKEVIRTUAL && shimOwner.equals(m.owner));
+        check(iv != null && "registerAndLoad".equals(iv.name) && NEW_DESC.equals(iv.desc) && !iv.itf,
+                "INVOKEVIRTUAL ModConfigBridge.registerAndLoad with new desc");
+    }
+
+    /** a @SHIM@ rule naming a class outside the shim manifest must fail translation */
+    void unresolvedShimOwnerFailsFast() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addCtorRetargetRules(List.of(OLD_OWNER + "|" + OLD_DESC + " -> "
+                + "@SHIM@/NoSuchShim|INSTANCE|nope|" + NEW_DESC));
+        ClassNode cn = branchyHost();
+        try {
+            r.rewriteCtorRetargets(cn);
+            check(false, "@SHIM@ rule with unknown manifest entry rejected");
+        } catch (IllegalStateException expected) {
+            check(true, "@SHIM@ rule with unknown manifest entry rejected");
+        }
+    }
+
+    /** the shipped rule file, fully loaded like the CLI does, rewrites through the shim */
+    void realRuleFileResolvesThroughShim() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        r.initShimRoot("moonlight");
+        ClassNode cn = branchyHost();
+        r.rewriteCtorRetargets(cn);
+        check(r.ctorRetargetsApplied == 1, "shipped rule drives the rewrite end-to-end");
+        check(countInsns(cn.methods.get(0), n -> n instanceof MethodInsnNode m
+                        && m.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && m.owner.startsWith("com/modbridge/shim/moonlight/")) == 1,
+                "shipped rule lands on the per-mod ModConfigBridge");
     }
 
     /** rules/methoddrops.txt must parse and hold the two ConfigSpecWrapper drops */

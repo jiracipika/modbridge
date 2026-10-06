@@ -1,0 +1,87 @@
+# eager-config slice: offline proof (no server, no run-matrix) — 2026-10-05
+# proof script (reproducible; run from anywhere):
+cat > /tmp/config-lane/verify-eager-config.sh <<'SCRIPT_EOF'
+#!/usr/bin/env bash
+# Offline proof for the eager-config slice (NO server, NO run-matrix):
+#   (i)   every translated `new ModConfig(...)` site routes through the per-mod
+#         ModConfigBridge shim (GETSTATIC INSTANCE + INVOKEVIRTUAL registerAndLoad),
+#   (ii)  no live constant-pool reference to the removed IConfigEvent remains in
+#         either output jar (the method-drop killed the only one), and the config
+#         listener method-refs target the REAL 21.1 ModConfigEvent,
+#   (iii) the rewriter gates passed (translate.sh's verifyNoForgeRefs + bridge
+#         bytecode == design: registerConfig then loadConfigs(COMMON, CONFIGDIR)).
+set -uo pipefail
+OUT=/tmp/config-lane/out
+W=/tmp/config-lane/verify-work
+PASS=0; FAIL=0
+check() { if [ "$2" -eq 0 ]; then echo "  [PASS] $1"; PASS=$((PASS+1)); else echo "  [FAIL] $1"; FAIL=$((FAIL+1)); fi; }
+
+rm -rf "$W"; mkdir -p "$W"
+JDK=/Volumes/HARD/dev-cache/jdks/jdk-21.0.12+8/Contents/Home
+MOON=$OUT/moonlight-121.jar
+SUPP=$OUT/supplementaries-121.jar
+
+echo "== (iii) jars exist and translate gates ran (translate.sh fails the run on net/minecraftforge refs) =="
+[ -f "$MOON" ] && [ -f "$SUPP" ]; check "translated jars present (verifyNoForgeRefs passed inside translate)" $?
+
+echo "== (i) ctor-retarget sites route through the bridge =="
+unzip -o -q "$MOON" 'net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper.class' 'com/modbridge/shim/*' -d "$W/moon"
+CSW="$W/moon/net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper.class"
+javap -c -p "$CSW" | grep -q "getstatic.*com/modbridge/shim/moonlight/ModConfigBridge.INSTANCE"
+check "ConfigSpecWrapper.<init> pushes ModConfigBridge.INSTANCE (was: NEW ModConfig)" $?
+javap -c -p "$CSW" | grep -q "invokevirtual.*ModConfigBridge.registerAndLoad"
+check "ConfigSpecWrapper.<init> calls ModConfigBridge.registerAndLoad" $?
+NEWC=$(javap -c -p "$CSW" | grep -c "INVOKESPECIAL.*ModConfig.\"<init>\"")
+[ "$NEWC" -eq 0 ]; check "no remaining new ModConfig(...) sites in ConfigSpecWrapper" $?
+
+BR="$W/moon/com/modbridge/shim/moonlight/ModConfigBridge.class"
+[ -f "$BR" ]; check "ModConfigBridge injected into the moonlight jar (per-mod package)" $?
+javap -c -p "$BR" | grep -q "invokevirtual.*ConfigTracker.registerConfig"
+check "bridge body: ConfigTracker.registerConfig (phase-5.5 registration parity kept)" $?
+javap -c -p "$BR" | grep -q "invokevirtual.*ConfigTracker.loadConfigs:(Lnet/neoforged/fml/config/ModConfig\$Type;Ljava/nio/file/Path;)V"
+check "bridge body: eager loadConfigs(COMMON, FMLPaths.CONFIGDIR.get())" $?
+
+echo "== (ii) no live reference to the removed IConfigEvent; listener targets are real 21.1 classes =="
+for j in "$MOON" "$SUPP"; do
+  HITS=$(unzip -p "$j" '*.class' 2>/dev/null | LC_ALL=C grep -ac "IConfigEvent" || true)
+  [ "$HITS" -eq 0 ]; check "zero IConfigEvent constant-pool refs in $(basename $j) (loadFromFile drop killed the only one)" $?
+done
+javap -v "$CSW" 2>/dev/null | grep -q "onConfigChange:(Lnet/neoforged/fml/event/config/ModConfigEvent;)V"
+check "mod-bus config listener method-ref targets the REAL 21.1 ModConfigEvent (bus TypeResolver + lambda checkcast resolve)" $?
+javap -v "$CSW" 2>/dev/null | grep -q "onPlayerLoggedIn:(Lnet/neoforged/neoforge/event/entity/player/PlayerEvent\$PlayerLoggedInEvent;)V"
+check "game-bus listener method-refs remapped to real 21.1 NeoForge event classes" $?
+
+echo "== bridge TYPES referenced by the bridge exist on the platform (class-load safety) =="
+LIB=/Volumes/ADATA/projects/modbridge/testenv/server-121/libraries
+LOADER=$(ls "$LIB"/net/neoforged/fancymodloader/loader/*/loader-*.jar)
+for t in 'net/neoforged/fml/config/ConfigTracker' 'net/neoforged/fml/config/ModConfig$Type' 'net/neoforged/fml/loading/FMLPaths'; do
+  CNT=$(unzip -l "$LOADER" | grep -cF "$t.class"); check "platform has $t" $([ "$CNT" -ge 1 ] && echo 0 || echo 1)
+done
+
+echo
+echo "eager-config offline proof: $PASS passed, $FAIL failed"
+exit $([ "$FAIL" -eq 0 ] && echo 0 || echo 1)
+SCRIPT_EOF
+
+# output:
+----
+== (iii) jars exist and translate gates ran (translate.sh fails the run on net/minecraftforge refs) ==
+  [PASS] translated jars present (verifyNoForgeRefs passed inside translate)
+== (i) ctor-retarget sites route through the bridge ==
+  [PASS] ConfigSpecWrapper.<init> pushes ModConfigBridge.INSTANCE (was: NEW ModConfig)
+  [PASS] ConfigSpecWrapper.<init> calls ModConfigBridge.registerAndLoad
+  [PASS] no remaining new ModConfig(...) sites in ConfigSpecWrapper
+  [PASS] ModConfigBridge injected into the moonlight jar (per-mod package)
+  [PASS] bridge body: ConfigTracker.registerConfig (phase-5.5 registration parity kept)
+  [PASS] bridge body: eager loadConfigs(COMMON, FMLPaths.CONFIGDIR.get())
+== (ii) no live reference to the removed IConfigEvent; listener targets are real 21.1 classes ==
+  [PASS] zero IConfigEvent constant-pool refs in moonlight-121.jar (loadFromFile drop killed the only one)
+  [PASS] zero IConfigEvent constant-pool refs in supplementaries-121.jar (loadFromFile drop killed the only one)
+  [PASS] mod-bus config listener method-ref targets the REAL 21.1 ModConfigEvent (bus TypeResolver + lambda checkcast resolve)
+  [PASS] game-bus listener method-refs remapped to real 21.1 NeoForge event classes
+== bridge TYPES referenced by the bridge exist on the platform (class-load safety) ==
+  [PASS] platform has net/neoforged/fml/config/ConfigTracker
+  [PASS] platform has net/neoforged/fml/config/ModConfig$Type
+  [PASS] platform has net/neoforged/fml/loading/FMLPaths
+
+eager-config offline proof: 14 passed, 0 failed

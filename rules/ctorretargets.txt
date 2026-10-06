@@ -3,6 +3,8 @@
 #   NEW X; DUP; <args>; INVOKESPECIAL X.<init>(oldDesc)V
 # -> GETSTATIC newOwner.field; <args>; INVOKEVIRTUAL newOwner.method (newDesc)
 # Identical operand-stack shape: the returned instance replaces the uninitialized ref.
+# A newOwner of "@SHIM@/<SimpleName>" resolves to the per-mod shim package
+# (com/modbridge/shim/<modid>/...) at rewrite time (shim carrier injection).
 #
 # Format: oldOwner|oldCtorDesc -> newOwner|receiverField|newMethod|newMethodDesc
 #
@@ -13,4 +15,26 @@
 # ctor + IConfigSpec.validateSpec + trackConfig (+ eager open for STARTUP), returns
 # the instance — exact semantic parity for the measured 1.20.1 call surface
 # (moonlight ConfigSpecWrapper.<init>; trial 002 phase 5.5).
-net/minecraftforge/fml/config/ModConfig|(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)V -> net/neoforged/fml/config/ConfigTracker|INSTANCE|registerConfig|(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;
+#
+# EAGER-CONFIG slice: the target is now the ModConfigBridge shim instead of the bare
+# ConfigTracker.registerConfig call. On 1.20.1, moonlight's ConfigSpecWrapper EAGERLY
+# loaded config files during registration (its loadFromFile path — method-dropped,
+# rules/methoddrops.txt), so reads made during mod construction worked. 21.1 FML
+# loads COMMON configs LATER (its own "Config loading" lifecycle step, after every
+# mod is constructed), so construction-time reads died with
+# "Cannot get config value before config is loaded." from the real
+# ModConfigSpec$ConfigValue.getRaw — measured death: the toMap(identity,
+# ConfigValue::get) INSIDE ConfigSpecWrapper's own ctor (Collectors frame in the
+# phase-5.5 boot stack), then every mod-ctor-chain read. The bridge registers
+# through ConfigTracker.registerConfig (unchanged phase-5.5 semantics) and then, for
+# COMMON configs only, calls ConfigTracker.loadConfigs(COMMON, CONFIGDIR): reads
+# during construction return the toml's values when a file is present, else spec
+# defaults. Documented trade-offs (javap-proven, see the shim's javadoc and the slice
+# notes): loadConfigs is per-type so OTHER mods' earlier-registered COMMON configs
+# load early and get a second ModConfigEvent$Loading at FML's own pass (reload
+# semantics; nightconfig re-watch is a Map.put replace); the early event fires before
+# this mod's own listeners are registered (absorbed; FML's pass delivers it later);
+# CLIENT-type is never eager-loaded (a dedicated server does not load it — matches
+# both platforms), STARTUP is already eager-opened inside registerConfig, SERVER
+# stays on FML's lifecycle.
+net/minecraftforge/fml/config/ModConfig|(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)V -> @SHIM@/ModConfigBridge|INSTANCE|registerAndLoad|(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;

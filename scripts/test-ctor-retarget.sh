@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Unit tests for the ctor-retarget pass (rules/ctorretargets.txt): NEW+DUP+INVOKESPECIAL
 # -> GETSTATIC receiver + INVOKEVIRTUAL surgery, including frame stacks inside the
-# ctor-arg region (branch among the args) — the ModConfig -> ConfigTracker.registerConfig
-# retarget that unblocks moonlight's ConfigSpecWrapper (trial 002 phase 5.5).
+# ctor-arg region (branch among the args) and @SHIM@ rule owners resolving to the
+# per-mod shim package — the ModConfig -> ModConfigBridge.registerAndLoad retarget
+# (registration + eager COMMON load) that unblocks moonlight's ConfigSpecWrapper
+# (trial 002 phase 5.5 + the eager-config slice).
 set -uo pipefail
 MB="$(cd "$(dirname "$0")/.." && pwd)"
 JDK=/Volumes/HARD/dev-cache/jdks/jdk-21.0.12+8/Contents/Home

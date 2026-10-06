@@ -8,6 +8,7 @@ net/minecraft/world/level/storage/loot/functions/LootItemConditionalFunctionSeri
 net/minecraft/world/level/storage/loot/functions/LootItemFunctionType
 net/minecraft/world/level/storage/loot/predicates/LootItemConditionType
 net/neoforged/fml/config/ConfigFileTypeHandler
+net/neoforged/fml/config/ModConfigBridge
 net/neoforged/fml/javafmlmod/FMLJavaModLoadingContext
 net/neoforged/neoforge/common/capabilities/Capability
 net/neoforged/neoforge/common/capabilities/CapabilityManager

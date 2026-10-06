@@ -1336,8 +1336,10 @@ public class Rewriter {
     /**
      * new X(args) -> newOwner.field.newMethod(args) for constructors whose semantics
      * survive behind a public factory-style call (rules/ctorretargets.txt; current
-     * entry: the Forge 1.20.1 ModConfig ctor -> ConfigTracker.registerConfig, which
-     * field-sets AND tracks exactly like the old self-tracking ctor).
+     * entry: the Forge 1.20.1 ModConfig ctor -> the per-mod ModConfigBridge shim,
+     * which calls ConfigTracker.registerConfig AND eagerly loads COMMON configs so
+     * construction-time reads return file/default values — the 1.20.1-visible timing
+     * moonlight's eager loadFromFile used to provide).
      *
      * Same NEW+DUP forward-scan as the ResourceLocation rewrite; the receiver field is
      * pushed under the args and INVOKESPECIAL becomes INVOKEVIRTUAL — the returned
@@ -1345,7 +1347,9 @@ public class Rewriter {
      * every frame AFTER the window stay valid. Frames INSIDE the argument region (a
      * branch among the ctor args) still name the uninitialized ref in two slots
      * (NEW+DUP): the first becomes the receiver type, the DUP copy is removed (see
-     * fixArgRegionFrames).
+     * fixArgRegionFrames). A rule whose newOwner is "@SHIM@/&lt;SimpleName&gt;" resolves
+     * to the per-mod shim package (com/modbridge/shim/&lt;modid&gt;/...) at rewrite
+     * time; the shim manifest must list the class or translation fails fast.
      */
     void rewriteCtorRetargets(ClassNode cn) {
         if (ctorRetargets.isEmpty()) return;
@@ -1379,12 +1383,13 @@ public class Rewriter {
                     n = n.getNext(); // no rule for this ctor (or nested-new: leave untouched)
                     continue;
                 }
+                String owner = resolveShimTarget(rule[0]);
                 AbstractInsnNode after = ctor.getNext();
                 FieldInsnNode receiver = new FieldInsnNode(Opcodes.GETSTATIC,
-                        rule[0], rule[1], "L" + rule[0] + ";");
+                        owner, rule[1], "L" + owner + ";");
                 MethodInsnNode call = new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
-                        rule[0], rule[2], rule[3], false);
-                fixArgRegionFrames(mn, dup, ctor, "L" + rule[0] + ";");
+                        owner, rule[2], rule[3], false);
+                fixArgRegionFrames(mn, dup, ctor, "L" + owner + ";");
                 mn.instructions.insert(dup, receiver);
                 mn.instructions.insert(ctor, call);
                 mn.instructions.remove(n);
