@@ -1905,9 +1905,18 @@ public class Rewriter {
             return h;
         }
         String[] retarget = memberRetargets.get(h.getOwner() + "|" + h.getDesc() + "|" + h.getName());
-        if (retarget == null) return h;
-        return new Handle(Opcodes.H_INVOKESTATIC, resolveShimTarget(retarget[0]),
-                h.getName(), retarget[1], false);
+        if (retarget != null) {
+            return new Handle(Opcodes.H_INVOKESTATIC, resolveShimTarget(retarget[0]),
+                    h.getName(), retarget[1], false);
+        }
+        // method-ref RENAMES ride memberrenames (same rules as call sites; the
+        // metafactory resolves the Handle's Methodref, so a renamed member must
+        // follow - FoodProperties$Builder::saturationMod -> saturationModifier)
+        String renamed = memberRenames.get(h.getOwner() + "|" + h.getDesc() + "|" + h.getName());
+        if (renamed != null) {
+            return new Handle(h.getTag(), h.getOwner(), renamed, h.getDesc(), h.isInterface());
+        }
+        return h;
     }
 
     String mapSrg(String name) {

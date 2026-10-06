@@ -29,3 +29,8 @@ net/mehvahdjukaar/moonlight/api/resources/recipe/BlockTypeSwapIngredient|()V|ini
 # cannot be a 21.1 BlockSource (final record); dropping dispenseFrom keeps the
 # entity class loadable at registration. Runtime not claimed.
 net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/DispenserMinecartEntity|(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/core/BlockPos;)V|dispenseFrom
+# phase 5.11: moonlight's additional-placements/duck-typing scan hook - the vanilla
+# item classes are NOT translated, so moonlight's mixin-injected IExtendedItem
+# interface never lands on them and getBehavior()'s bare CHECKCAST CCEs. The whole
+# surface is mixin-injected RUNTIME (unclaimed); drop the boot-time hook.
+net/mehvahdjukaar/moonlight/api/item/additional_placements/AdditionalItemPlacementsAPI|()V|afterItemReg
