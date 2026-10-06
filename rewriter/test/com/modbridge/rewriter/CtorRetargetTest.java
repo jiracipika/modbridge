@@ -469,6 +469,26 @@ public final class CtorRetargetTest {
         check(applySuperSwapIn(r, "test/Guarded", "test/old/Super").equals("test/old/Super"),
                 "superswap NOT applied for unmatched classes");
         check(r.superswapsApplied == 1, "superswap counter = 1");
+        // the swap carries the super plumbing: invokespecial oldSuper.<init> follows
+        ClassNode sub = new ClassNode();
+        sub.name = "test/Sub";
+        sub.version = Opcodes.V17;
+        sub.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        sub.superName = "test/old/Super";
+        MethodNode ctor = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "(I)V", null, null);
+        ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        ctor.instructions.add(new VarInsnNode(Opcodes.ILOAD, 1));
+        ctor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "test/old/Super", "<init>", "(I)V", false));
+        ctor.instructions.add(new InsnNode(Opcodes.RETURN));
+        sub.methods.add(ctor);
+        r.remapClass(sub);
+        MethodInsnNode superCall = first(ctor, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKESPECIAL && "<init>".equals(m.name));
+        check(superCall != null && superCall.owner.equals("com/modbridge/shim/testmod/NewSuper"),
+                "superswap retargets the ctor's invokespecial oldSuper.<init> owner");
+        check(sub.superName.equals("com/modbridge/shim/testmod/NewSuper"),
+                "superswap retargets superName itself");
         // shipped rule file parses + guards
         Rewriter rs = new Rewriter();
         rs.loadRules(Path.of("rules"));

@@ -1725,7 +1725,21 @@ public class Rewriter {
     void remapClass(ClassNode cn) {
         cn.name = remapType(cn.name);
         cn.superName = remapType(cn.superName);
+        String beforeSuperSwap = cn.superName;
         cn.superName = applySuperSwap(cn.name, cn.superName);
+        if (!cn.superName.equals(beforeSuperSwap)) {
+            // the swap must carry the super PLUMBING: the ctor's invokespecial
+            // oldSuper.<init> Methodref is a separate constant from superName
+            // (live-boot VerifyError "Bad <init> method call")
+            for (MethodNode m : cn.methods) {
+                for (AbstractInsnNode n : m.instructions) {
+                    if (n instanceof MethodInsnNode mi && mi.getOpcode() == Opcodes.INVOKESPECIAL
+                            && beforeSuperSwap.equals(mi.owner) && "<init>".equals(mi.name)) {
+                        mi.owner = cn.superName;
+                    }
+                }
+            }
+        }
         replaceAll(cn.interfaces, this::remapType);
         if (cn.nestHostClass != null) cn.nestHostClass = remapType(cn.nestHostClass);
         replaceAll(cn.nestMembers, this::remapType);
