@@ -24,3 +24,7 @@ net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/
 # (the retarget below then fixes owner+kind; this rename runs first inside
 # applyMemberRenames, so the retarget key carries the NEW name).
 net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|getRegistryKey=key
+# --- phase 5.10 registry lane: RegisterEvent accessor renames (the retargets fix
+# owner+desc; these carry the names, applied first inside applyMemberRenames).
+net/minecraftforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getVanillaRegistry=getRegistry
+net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IForgeRegistry;|getForgeRegistry=getRegistry

@@ -75,9 +75,9 @@ net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|COMPONENT -> net
 net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|FLAT_COMPONENT -> net/minecraft/network/chat/ComponentSerialization|Lcom/mojang/serialization/Codec;|FLAT_CODEC
 
 # --- registry lane, RegisterEvent accessors (phase 5.10, boot dispatch wall):
-# getVanillaRegistry renamed getRegistry() (same erased desc); getForgeRegistry()
-# has no same-shape member - but the IForgeRegistry typerename already makes its
-# return the vanilla Registry, so retargeting it to getRegistry() restores the
-# whole chain (the follow-up .register calls ride the RegistryCompat static rule).
-net/minecraftforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getVanillaRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getRegistry
-net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IForgeRegistry;|getForgeRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getRegistry
+# getVanillaRegistry/getForgeRegistry renamed getRegistry() on 21.1 - the NAME
+# renames ride memberrenames.txt (applied first); these retargets fix owner+desc
+# (same erased return after the IForgeRegistry typerename). The follow-up
+# .register calls ride the RegistryCompat static rule.
+net/minecraftforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|virtual
+net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IForgeRegistry;|getRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|virtual
