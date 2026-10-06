@@ -32,12 +32,13 @@ net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteDoorBlock|net/min
 net/mehvahdjukaar/supplementaries/common/block/blocks/GoldTrapdoorBlock|net/minecraft/world/level/block/TrapDoorBlock -> @SHIM@/TrapDoorBlockCompat
 net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteTrapdoorBlock|net/minecraft/world/level/block/TrapDoorBlock -> @SHIM@/TrapDoorBlockCompat
 
-# Blocks lane, phase 5.11 — the 1.21 vanilla block-ctor drift family (measured
-# against every vanilla-parented subclass's SUPER-CALL desc + javap of both
-# versions' ctors): FenceGateBlock/SkullBlock/WallSkullBlock/DoorBlock/TrapDoorBlock
-# have param-order-swapped (+protected) 21.1 ctors whose call sites still carry the
-# 1.20.1 shape. DiodeBlock/BaseFireBlock/ConcretePowderBlock/CropBlock/BlockEntity
-# parents and the StairBlock/LiquidBlock/SoundType super-calls measured UNCHANGED.
+# Blocks lane, phase 5.11 — the 1.21 vanilla block-ctor drift family (census =
+# every vanilla-parented subclass's measured SUPER-CALL desc vs javap of the 21.1
+# ctors). GENUINELY DRIFTED (1.20.1-shaped call sites): DoorBlock/TrapDoorBlock
+# ((Properties,BlockSetType) -> 21.1 (BlockSetType,Properties) protected) and
+# FenceGateBlock ((Properties,WoodType) -> (WoodType,Properties)). ALREADY
+# 21.1-SHAPED (no swap): EndermanSkullBlock/EndermanSkullWallBlock (skulls),
+# ModStairBlock/ModLiquidBlock/FiniteLiquidBlock/ModSoundType (moonlight resolves
+# its lazy suppliers itself). UNCHANGED parents: DiodeBlock/BaseFireBlock/
+# ConcretePowderBlock/CropBlock/BlockEntity family.
 net/mehvahdjukaar/supplementaries/common/block/blocks/IronGateBlock|net/minecraft/world/level/block/FenceGateBlock -> @SHIM@/FenceGateBlockCompat
-net/mehvahdjukaar/supplementaries/common/block/blocks/EndermanSkullBlock|net/minecraft/world/level/block/SkullBlock -> @SHIM@/SkullBlockCompat
-net/mehvahdjukaar/supplementaries/common/block/blocks/EndermanSkullWallBlock|net/minecraft/world/level/block/WallSkullBlock -> @SHIM@/WallSkullBlockCompat

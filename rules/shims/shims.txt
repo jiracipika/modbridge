@@ -25,10 +25,8 @@ com/modbridge/shim/RecordItem
 com/modbridge/shim/RegistryCompat
 com/modbridge/shim/ResourceLocationCompat
 com/modbridge/shim/SimpleChannelCompat
-com/modbridge/shim/SkullBlockCompat
 com/modbridge/shim/TrapDoorBlockCompat
 com/modbridge/shim/Vanishable
-com/modbridge/shim/WallSkullBlockCompat
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec
