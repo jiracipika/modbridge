@@ -56,6 +56,7 @@ public final class ShimFacadeTest {
         descriptorExactness();
         lootShimExactness();
         conditionShimExactness();
+        criteriaShimExactness();
         rulesAndInjection();
     }
 
@@ -369,12 +370,62 @@ public final class ShimFacadeTest {
         check(after.size() == sizeBefore + 1, "CraftingHelper.register: stored in the inert registry");
     }
 
+    // --------------------------------------------------- criteria-lane shim (phase 5.7)
+
+    /**
+     * The criteria lane's measured surface: 1.20.1's AbstractCriterionTriggerInstance
+     * (abstract base class) was folded into the 21.1 INTERFACE
+     * SimpleCriterionTrigger$SimpleInstance (player(): Optional<ContextAwarePredicate>;
+     * validate comes default from CriterionTriggerInstance). The shim implements the
+     * real interface, so translated subclasses are transitively IS-A both — exactly
+     * what linking the trigger (generic bound SimpleCriterionTrigger<T extends
+     * SimpleInstance>) needs at boot.
+     */
+    void criteriaShimExactness() throws Exception {
+        Class<?> shim = net.minecraft.advancements.critereon.AbstractCriterionTriggerInstance.class;
+        check(java.lang.reflect.Modifier.isAbstract(shim.getModifiers()),
+                "AbstractCriterionTriggerInstance shim: abstract (1.20.1 parity)");
+        check(shim.getSuperclass() == Object.class,
+                "AbstractCriterionTriggerInstance shim: extends nothing platform-owned");
+        check(java.util.List.of(shim.getInterfaces())
+                        .contains(net.minecraft.advancements.critereon.SimpleCriterionTrigger.SimpleInstance.class),
+                "AbstractCriterionTriggerInstance shim: implements the real 21.1 SimpleInstance");
+        check(net.minecraft.advancements.CriterionTriggerInstance.class.isAssignableFrom(shim),
+                "AbstractCriterionTriggerInstance subclasses: transitively IS-A CriterionTriggerInstance");
+
+        check(desc(shim, "player").equals("()Ljava/util/Optional;"),
+                "SimpleInstance.player: ()Ljava/util/Optional; implemented");
+        check(shim.getConstructor(net.minecraft.resources.ResourceLocation.class,
+                        net.minecraft.advancements.critereon.ContextAwarePredicate.class) != null,
+                "AbstractCriterionTriggerInstance.<init>(ResourceLocation, ContextAwarePredicate): super-ctor surface");
+        check(desc(shim, "getCriterion").equals("()Lnet/minecraft/resources/ResourceLocation;"),
+                "getCriterion: 1.20.1 m_7294_ surface");
+        check(methodNamed(shim, "getPlayerPredicate", 0).getReturnType()
+                == net.minecraft.advancements.critereon.ContextAwarePredicate.class,
+                "getPlayerPredicate: 1.20.1 m_285924_ surface");
+
+        // runtime semantics: a translated-style subclass is IS-A SimpleInstance and
+        // player() reflects the ctor param (null-safe).
+        // id/predicate are null on purpose: constructing a real ResourceLocation
+        // triggers the vanilla static-init cascade (DFU/fastutil/netty) that only
+        // exists in a full server env; the shim merely stores the refs.
+        class TranslatedInstance extends net.minecraft.advancements.critereon.AbstractCriterionTriggerInstance {
+            TranslatedInstance() {
+                super(null, null);
+            }
+        }
+        TranslatedInstance ti = new TranslatedInstance();
+        check(ti instanceof net.minecraft.advancements.critereon.SimpleCriterionTrigger.SimpleInstance,
+                "translated-style subclass: IS-A SimpleInstance");
+        check(ti.player().isEmpty(), "player(): null predicate -> Optional.empty (null-safe)");
+    }
+
     // ------------------------------------------------------- rules-level + injection
 
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 26, "rules/shims: manifest loads 26 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes)");
+        check(r.shims.size() == 27, "rules/shims: manifest loads 27 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane class)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -423,6 +474,13 @@ public final class ShimFacadeTest {
         check(r.remapDesc("(Lnet/minecraftforge/common/crafting/conditions/IConditionSerializer;)Lnet/minecraftforge/common/crafting/conditions/IConditionSerializer;")
                         .equals("(Lcom/modbridge/shim/testmod/IConditionSerializer;)Lcom/modbridge/shim/testmod/IConditionSerializer;"),
                 "rules: CraftingHelper.register desc remaps whole (the boot-wall constant)");
+        // criteria lane: the folded-away base class resolves to the per-mod shim
+        check(r.remapType("net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance")
+                        .equals("com/modbridge/shim/testmod/AbstractCriterionTriggerInstance"),
+                "rules: AbstractCriterionTriggerInstance -> per-mod shim");
+        check(r.remapDesc("(Lnet/minecraft/advancements/critereon/AbstractCriterionTriggerInstance;)V")
+                        .equals("(Lcom/modbridge/shim/testmod/AbstractCriterionTriggerInstance;)V"),
+                "rules: criteria super-ctor desc remaps whole");
         check(r.memberRenames.containsKey("net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction"),
                 "rules: getToolAction=getItemAbility memberrename present");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
@@ -431,7 +489,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 26, "injectShims(): all 26 shims present under the per-mod package");
+        check(entries.size() == 27, "injectShims(): all 27 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

@@ -110,3 +110,20 @@ net/minecraft/world/level/storage/loot/functions/LootItemFunctionType	@SHIM@/Loo
 # the fork — no cross-type caller measured).
 net/minecraftforge/common/crafting/conditions/IConditionSerializer	@SHIM@/IConditionSerializer
 net/minecraftforge/common/crafting/CraftingHelper	@SHIM@/CraftingHelper
+# --- criteria lane (phase 5.7): AbstractCriterionTriggerInstance folded into an interface.
+# 1.20.1's net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance (the
+# abstract base class of every custom criterion instance) does not exist on 1.21.1 —
+# it was folded into the INTERFACE SimpleCriterionTrigger$SimpleInstance (requires
+# player(): Optional<ContextAwarePredicate>; validate(CriterionValidator) comes as a
+# default from CriterionTriggerInstance). Measured surface across both trial jars:
+# exactly ONE subclass (moonlight GrindItemTrigger$Instance) invoking the
+# (ResourceLocation, ContextAwarePredicate) super-ctor; supplementaries has none.
+# The boot wall: linking GrindItemTrigger verifies its methods against the generic
+# bound SimpleCriterionTrigger<T extends SimpleInstance> and resolves the Instance's
+# hierarchy -> NCDFE (the live-boot trace). The shim implements the real 21.1
+# SimpleInstance, so translated subclasses are transitively IS-A SimpleInstance /
+# CriterionTriggerInstance for the platform's checks. serializeToJson
+# (SerializationContext — a class absent on 21.1) and trigger-firing member drift
+# (ItemPredicate.matches -> test) are deliberately not carried: advancement-criteria
+# RUNTIME is not claimed (same acceptance as the loot/condition-lane shims).
+net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance	@SHIM@/AbstractCriterionTriggerInstance
