@@ -81,3 +81,10 @@ net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|FLAT_COMPONENT -
 # .register calls ride the RegistryCompat static rule.
 net/minecraftforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|virtual
 net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IForgeRegistry;|getRegistry -> net/neoforged/neoforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|virtual
+
+# --- registry lane addendum (phase 5.11, live-boot wall): call sites whose 1.20.1
+# receiver was ALREADY the vanilla Registry (e.g. RegisterEvent.getVanillaRegistry()
+# return) carry owner net/minecraft/core/Registry with the old register(RL,Object)V
+# instance shape - the 21.1 Registry has no such instance member (register is a
+# static returning the value). Same RegistryCompat receiver-prepended wrapper.
+net/minecraft/core/Registry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|static

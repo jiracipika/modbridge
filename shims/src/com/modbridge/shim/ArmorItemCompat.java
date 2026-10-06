@@ -16,7 +16,7 @@ import net.minecraft.world.item.Item;
  */
 public class ArmorItemCompat extends Item {
 
-    public ArmorItemCompat(ArmorMaterial material, ArmorItem.Type type,
+    public ArmorItemCompat(Object material, ArmorItem.Type type,
             Item.Properties properties) {
         super(properties);
     }

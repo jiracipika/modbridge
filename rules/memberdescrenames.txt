@@ -4,3 +4,9 @@
 # Limitation: only valid when the caller ignores the return value; value-consuming call
 # sites need a shim (roadmap).
 net/minecraft/commands/CommandSourceStack|sendSuccess|(Ljava/util/function/Supplier;Z)Z=(Ljava/util/function/Supplier;Z)V
+# phase 5.11 armor lane: ShulkerShellItem's ArmorItem super-call must accept the
+# translated material impl (implements the ArmorMaterialCompat shim interface, NOT
+# the 21.1 final record) - widen the material param to Object. The superswap
+# retargets the OWNER to ArmorItemCompat (whose ctor takes Object); this desc rule
+# makes the ARG verify. Original-space key (applyMemberRenames runs pre-remapClass).
+net/minecraft/world/item/ArmorItem|<init>|(Lnet/minecraft/world/item/ArmorMaterial;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V = (Ljava/lang/Object;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V
