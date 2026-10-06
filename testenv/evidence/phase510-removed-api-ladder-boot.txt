@@ -1,0 +1,83 @@
+# phase 5.10 — networking facade + removed-API ladder (2026-10-06, 01:45–03:20)
+
+Matrix 16/16 at close. Boot ladder (server-121, clean cache each round, staged jars
+VERIFIED in latest.log — the false-Done gotcha bit twice tonight: run-matrix.sh wipes
+mods/source-1201, ALWAYS restage after a matrix run).
+
+## Walls that FELL (in order)
+
+1. **NetworkRegistry** (the phase-5.9 converged wall, both mods): 8 typerenames →
+   8 inert facade shims (NetworkRegistryCompat/SimpleChannelCompat/MessageHandler/
+   NetworkEvent$Context/NetworkDirection/PacketDistributor + $PacketTarget +
+   $TargetPoint). Typerename-only, no new rewriter mechanisms. d74c84d.
+2. **Shim-relocation bugs x3** (exposed by the enum shim): MethodInsn/FieldInsn
+   owners in ARRAY form ([Lcom/...Enum;.clone()), TypeInsn array descs (CHECKCAST in
+   synthesized values()), LdcInsn class literals (synthesized valueOf's
+   NetworkDirection.class). Byte-level regression: relocated bytes must have zero
+   base-name refs AND zero dotted binary names. eb350b8, 265b294.
+3. **Removed-API ladder** (each a live-boot wall, each measured to a tiny surface):
+   - Vanishable (marker interface, 1 implementer) — 1b976f1
+   - AbstractIngredient (1 subclass, no-arg ctor + invalidate; 21.1 Ingredient is
+     FINAL so the carrier cannot extend it) — 1b976f1
+   - RecordItem (PancakeItem extends it; shim extends the REAL 21.1 Item so the
+     useOn super-call stays live) + IIngredientSerializer (interface shim,
+     parse/parse/write) — 0729888
+   - GravelBlock (RakedGravelBlock; shim extends the real FallingBlock, inert
+     codec()) + block_type_swap init() method-drop (the impl class then never
+     loads, so its Ingredient-returning create() never fails verification) — 7ec4574
+   - isValidResourceLocation → tryParse (config-correct pass) — b59b8bd
+   - Properties.copy → ofLegacyCopy memberrename (~12 sites) — 05644c6/c80d4b2
+4. **Enchantment lane**: 21.1 Enchantment is FINAL + data-driven — StasisEnchantment
+   cannot even DEFINE. NEW MECHANISM: rules/superswaps.txt (class|oldSuper ->
+   newSuper, guarded on the current super; the swap carries the super PLUMBING —
+   invokespecial oldSuper.<init> AND member super-calls follow) + EnchantmentCompat/
+   Enchantment$Rarity/EnchantmentCategory shims. 720548d, 9a416c8, ef31cb4.
+5. **Registry lane**: ForgeRegistries vanilla keys → BuiltInRegistries (SINGULAR
+   names) — memberretargets now covers FieldInsnNode (owner+desc+NEW-NAME swap);
+   IForgeRegistry → vanilla Registry interface typerename; getRegistryKey→key (name
+   rides memberrenames — MEMBERRETARGETS CAN NEVER RENAME, third time this pattern
+   bit, now documented in the rules file); register → RegistryCompat static void
+   wrapper. The applyMemberRenames early-return also had to stop skipping the
+   retargets-only case. 54c57ce, e529e4f, e9e4bca, a72b591, d6f6c00.
+   **CRITICAL ORDERING LESSON: applyMemberRenames runs BEFORE remapClass in
+   transform() (lines 774/775) — ALL memberretarget/memberrename keys are
+   ORIGINAL-space.** (My registry rules were keyed post-remap and silently never
+   fired; the "proof" scan only printed BuiltInRegistries-owned refs.)
+6. **ExtraCodecs** COMPONENT/FLAT_COMPONENT → ComponentSerialization
+   CODEC/FLAT_CODEC field retargets — 8a4b1f6.
+7. **Event lane**: LivingTickEvent → shim extending the real EntityTickEvent.Post
+   with covariant getEntity():LivingEntity (fires NOT bridged — no 21.1
+   living-tick event); EntityItemPickupEvent → shim extending the real PlayerEvent
+   with inert cancellation/Result state (no 21.1 pickup event AT ALL; forge's
+   Event.Result is gone); TickEvent$PlayerTickEvent → plain typerename to
+   event.tick.PlayerTickEvent$Post (handler declared only the param type; fires
+   post-phase). c3e7b52, cfb4476, a4b681d.
+8. **RegisterEvent accessors**: getVanillaRegistry/getForgeRegistry → getRegistry
+   (names via memberrenames, owner+desc via retargets). cece880, 6480a82.
+9. **Dispense lane**: Properties.noParticlesOnBreak → noTerrainParticles
+   memberrename; MovingBlockSource's `implements BlockSource` — the BlockSource
+   typerename to 21.1's dispense-context RECORD is right for behavior params but
+   ICCE-fatal on an implements list → NEW superswaps form "interface:<name> ->
+   REMOVE" (boot-only relief; minecart dispensing not claimed). 5c39196, 24d8e2b.
+
+## Remaining walls (from the last boot log, 03:20)
+
+- **Lambda SAM drift**: MthUtils$$Lambda vs Shapes$DoubleLineConsumer.consume(d×6)
+  — the voxel-shape API restructure changed a functional-interface shape; indy
+  bsmArgs need the same rewrite treatment the mixins got (measured, then rewrite
+  SAM MethodTypes or shim the consumer).
+- **"Bad type on operand stack" VerifyError** right after (truncated in the log —
+  full stack in testenv/server-121/logs/latest.log).
+- Whatever follows — the ladder is the phase-5 "wide vanilla deltas" reality; each
+  wall is small but they keep coming (supp is a 1,000+-class mod).
+
+## Gates at close
+
+- unit: ctor-retarget 3/3 (186 checks, count-independent assertions now), shims
+  3/3 (232 checks, 52 shims), srg 4/4, refmap 3/3; matrix 16/16.
+- RUNBOOK additions baked in tonight: (1) restage source-1201 jars after every
+  matrix run (it wipes them); (2) build-shims BEFORE build-agent (the agent embeds
+  rules); (3) never commit with a red test script (bit twice tonight — the count
+  assertions are now count-independent sentinels); (4) memberretarget keys are
+  ORIGINAL-space (applyMemberRenames runs before remapClass); (5) memberretargets
+  can never RENAME — name changes ride memberrenames.txt, applied first.

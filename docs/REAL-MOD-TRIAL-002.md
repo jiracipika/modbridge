@@ -972,3 +972,38 @@ payload-registrar bridge after.
 
 Gates: ctor-retarget 70 checks, shims 169 checks (30 shims), srg-resolver 4/4,
 refmap 3/3, matrix 16/16.
+
+## Phase 5.10 — networking facades + the removed-API ladder (2026-10-06, overnight)
+
+~20 boot iterations, all walls measured-then-fixed (full ladder + runbook lessons:
+testenv/evidence/phase510-removed-api-ladder-boot.txt). Highlights:
+
+1. **NetworkRegistry fell** (the converged wall): 8 typerenames to 8 inert per-mod
+   facade shims (SimpleChannel world + PacketDistributor family + NetworkEvent$
+   Context). NetworkHooks deliberately unmapped (lazy resolution, runtime walls).
+2. **Three shim-relocator bugs** (enum synthesis): array-form MethodInsn/FieldInsn
+   owners, TypeInsn array descs, LDC class literals — plus the InnerClasses outer-
+   name DOTS ClassFormatError. All pinned by the byte-level relocation scan.
+3. **Removed-API ladder**: Vanishable, AbstractIngredient (21.1 Ingredient FINAL),
+   RecordItem (extends the real Item), IIngredientSerializer, GravelBlock (extends
+   the real FallingBlock), block_type_swap init() method-drop, isValidResource-
+   Location→tryParse, Properties.copy→ofLegacyCopy.
+4. **SUPER-SWAP mechanism** (rules/superswaps.txt): guarded superclass swap for
+   subclasses of now-FINAL platform classes (Enchantment) — the swap carries the
+   super plumbing (invokespecial oldSuper.<init> + member super-calls). Plus the
+   INTERFACE-STRIP form for interfaces renamed onto 21.1 CLASSES (BlockSource→the
+   dispense-context record: right for params, ICCE-fatal on implements lists).
+5. **Registry lane**: memberretargets now covers FieldInsnNode (owner+desc+new-name);
+   ForgeRegistries vanilla keys → BuiltInRegistries singular names; IForgeRegistry →
+   vanilla Registry; RegisterEvent accessors. **The ordering lesson: ALL
+   memberretarget keys are ORIGINAL-space — applyMemberRenames runs BEFORE
+   remapClass in transform() — and memberretargets can never RENAME (name changes
+   ride memberrenames.txt, applied first).**
+6. **Event lane**: LivingTickEvent + EntityItemPickupEvent shims (register-able,
+   firing documented dead — no 21.1 events); TickEvent$PlayerTickEvent plain
+   typerename to PlayerTickEvent$Post (fires, post-phase).
+
+State at close: moonlight constructs THROUGH registry dispatch; supplementaries
+reaches registry dispatch and dies on the Shapes$DoubleLineConsumer lambda SAM
+drift (next slice: indy bsmArgs SAM rewrite) + a following VerifyError. Gates:
+ctor-retarget 186 checks, shims 232 (52 shims), matrix 16/16.
