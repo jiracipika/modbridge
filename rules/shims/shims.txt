@@ -1,4 +1,5 @@
 com/modbridge/shim/ObfuscationReflectionHelper
+net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec
 net/minecraft/world/level/storage/loot/LootSerializer
