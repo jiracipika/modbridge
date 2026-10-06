@@ -41,7 +41,3 @@ net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteTrapdoorBlock|net
 net/mehvahdjukaar/supplementaries/common/block/blocks/IronGateBlock|net/minecraft/world/level/block/FenceGateBlock -> @SHIM@/FenceGateBlockCompat
 net/mehvahdjukaar/supplementaries/common/block/blocks/EndermanSkullBlock|net/minecraft/world/level/block/SkullBlock -> @SHIM@/SkullBlockCompat
 net/mehvahdjukaar/supplementaries/common/block/blocks/EndermanSkullWallBlock|net/minecraft/world/level/block/WallSkullBlock -> @SHIM@/WallSkullBlockCompat
-net/mehvahdjukaar/moonlight/api/block/ModStairBlock|net/minecraft/world/level/block/StairBlock -> @SHIM@/StairBlockCompat
-net/mehvahdjukaar/moonlight/api/block/ModLiquidBlock|net/minecraft/world/level/block/LiquidBlock -> @SHIM@/LiquidBlockCompat
-net/mehvahdjukaar/moonlight/api/fluids/FiniteLiquidBlock|net/minecraft/world/level/block/LiquidBlock -> @SHIM@/LiquidBlockCompat
-net/mehvahdjukaar/moonlight/api/misc/ModSoundType|net/minecraft/world/level/block/SoundType -> @SHIM@/SoundTypeCompat
