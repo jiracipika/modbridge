@@ -30,10 +30,14 @@ public final class RegistryCompat {
      *  duplicate-override nor the direct-register semantics are claimed: entries
      *  registered ONLY through this path (mod-compat overrides) are inert. */
     public static void register(Registry<Object> registry, ResourceLocation id, Object value) {
-        if (!warned) {
-            warned = true;
-            System.out.println("[ModBridge shim] direct registry register suppressed "
-                    + "(DeferredRegister path owns registration; overrides not claimed)");
+        try {
+            Registry.register(registry, id, value);
+        } catch (RuntimeException duplicate) {
+            if (!warned) {
+                warned = true;
+                System.out.println("[ModBridge shim] registry register kept existing entry: "
+                        + id + " (" + duplicate.getMessage() + ")");
+            }
         }
     }
 }
