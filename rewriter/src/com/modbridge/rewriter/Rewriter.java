@@ -1733,6 +1733,13 @@ public class Rewriter {
      */
     void applyDescRewrite(ClassNode cn, MethodNode mn, MethodInsnNode m) {
         String newDesc = memberDescRenames.get(m.owner + "|" + m.name + "|" + m.desc);
+        if (newDesc == null) {
+            // "*" owner fallback: (name, desc) matches regardless of the receiver's
+            // static type - javac emits the RECEIVER type as owner, so an inherited
+            // vanilla method called on a SUBCLASS/mixin-self receiver has its own
+            // owner (the boot-injected ZombieHorse mixin handler's hasEffect call)
+            newDesc = memberDescRenames.get("*|" + m.name + "|" + m.desc);
+        }
         if (newDesc == null) return;
         org.objectweb.asm.Type oldRet = org.objectweb.asm.Type.getReturnType(m.desc);
         org.objectweb.asm.Type newRet = org.objectweb.asm.Type.getReturnType(newDesc);
