@@ -1,0 +1,11 @@
+# phase 5.8 — round-2 lanes merged (f71d0f3) + integration boot (2026-10-05, ~22:53)
+
+BOTH round-2 walls PASSED on the live boot:
+- DFU ICCE gone: supp sailed past TomlConfigOps (config codec path ran clean past its round-1 death)
+- IConditionSerializer phantom gone: MoonlightRegistry clinit + RegHelper.linked clean
+
+Next walls = both lanes' exact round-2 predictions:
+1. supp: NoSuchMethodError DataResult.getOrThrow(boolean,Consumer) — member drift, 20 sites (config lane round 3)
+2. moonlight: NoClassDefFoundError AbstractCriterionTriggerInstance (loot lane round 3)
+java.lang.NoSuchMethodError: 'java.lang.Object com.mojang.serialization.DataResult.getOrThrow(boolean, java.util.function.Consumer)'
+java.lang.NoClassDefFoundError: net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance
