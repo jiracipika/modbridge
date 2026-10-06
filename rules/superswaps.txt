@@ -54,3 +54,11 @@ net/mehvahdjukaar/supplementaries/common/items/forge/ShulkerShellItem$SkulkerShe
 # USE SITE (DispenserMinecartEntity.dispenseFrom passing it as a BlockSource to
 # DispenseItemBehavior.dispense) fails verification. Minecart dispensing RUNTIME is
 # not claimed; drop the dispatch method so the class loads (boot).
+
+# Armor lane, use-site (phase 5.11): ShulkerShellItem extends ArmorItem; its
+# (ArmorMaterial,Type,Properties) super-call cannot verify against the real 21.1
+# ArmorItem (ArmorMaterial is a final record; the translated material impl is
+# IS-A the ArmorMaterialCompat shim interface instead). Swap to ArmorItemCompat
+# (extends plain Item, carries the call-site desc, ignores the material) - the
+# item constructs; armor behavior NOT claimed.
+net/mehvahdjukaar/supplementaries/common/items/forge/ShulkerShellItem|net/minecraft/world/item/ArmorItem -> @SHIM@/ArmorItemCompat
