@@ -460,8 +460,8 @@ public final class CtorRetargetTest {
                 "test/Sub|test/old/Super -> @SHIM@/NewSuper",
                 "test/Guarded|test/other/Super -> test/never/Applied"));
         r.initShimRoot("testmod");
-        // NOTE: @SHIM@ resolution needs the shim manifest - add the name
-        r.shims.put("com/modbridge/shim/NewSuper", new byte[0]);
+        // NOTE: @SHIM@ resolution checks the shim simple-name manifest
+        r.shimSimpleNames.put("NewSuper", "com/modbridge/shim/NewSuper");
         check(applySuperSwapIn(r, "test/Sub", "test/old/Super").equals("com/modbridge/shim/testmod/NewSuper"),
                 "superswap applied when the current super matches the rule's old super");
         check(applySuperSwapIn(r, "test/Sub", "test/other/Super").equals("test/other/Super"),
