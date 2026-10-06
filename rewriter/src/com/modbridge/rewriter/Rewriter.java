@@ -360,12 +360,29 @@ public class Rewriter {
             }
             for (AbstractInsnNode n : m.instructions) {
                 if (n instanceof TypeInsnNode ti) {
-                    ti.desc = names.getOrDefault(ti.desc, ti.desc);
+                    // array-form descs ([Lcom/modbridge/shim/EnumShim; - the CHECKCAST
+                    // in a synthesized enum values()) must go through descriptor text
+                    // replacement, not the plain-name map
+                    ti.desc = ti.desc.startsWith("[")
+                            ? relocateDescText(ti.desc, names)
+                            : names.getOrDefault(ti.desc, ti.desc);
+                } else if (n instanceof LdcInsnNode l && l.cst instanceof Type ty) {
+                    // class literals: javac's synthesized enum valueOf() LDCs
+                    // NetworkDirection.class - base-name constant otherwise survives
+                    l.cst = Type.getType(relocateDescText(ty.getDescriptor(), names));
+                } else if (n instanceof MultiANewArrayInsnNode ma) {
+                    ma.desc = relocateDescText(ma.desc, names);
                 } else if (n instanceof MethodInsnNode mi) {
-                    mi.owner = names.getOrDefault(mi.owner, mi.owner);
+                    // array-form owners exist: javac compiles enum values()'s
+                    // \$VALUES.clone() as invokevirtual with owner [Lcom/.../Enum;
+                    mi.owner = mi.owner.startsWith("[")
+                            ? relocateDescText(mi.owner, names)
+                            : names.getOrDefault(mi.owner, mi.owner);
                     mi.desc = relocateDescText(mi.desc, names);
                 } else if (n instanceof FieldInsnNode fi) {
-                    fi.owner = names.getOrDefault(fi.owner, fi.owner);
+                    fi.owner = fi.owner.startsWith("[")
+                            ? relocateDescText(fi.owner, names)
+                            : names.getOrDefault(fi.owner, fi.owner);
                     fi.desc = relocateDescText(fi.desc, names);
                 } else if (n instanceof InvokeDynamicInsnNode id) {
                     id.desc = relocateDescText(id.desc, names);

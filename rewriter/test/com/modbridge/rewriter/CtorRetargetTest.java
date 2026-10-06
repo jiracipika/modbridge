@@ -3,7 +3,9 @@ package com.modbridge.rewriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -386,6 +388,25 @@ public final class CtorRetargetTest {
                 "message keeps its erased desc and virtual kind");
         check(!cn.methods.get(2).desc.contains("PartialResult"),
                 "host method desc carries no PartialResult after remapClass");
+        // shim relocation must leave ZERO base-name refs in relocated bytes - the
+        // live boot died twice here: lambda Handle bsmArgs (DataResultCompat) and the
+        // ENUM synthesis positions ($VALUES field desc / LDC class constant in the
+        // synthesized valueOf) on NetworkDirection
+        Rewriter rs = new Rewriter();
+        rs.loadRules(Path.of("rules"));
+        rs.initShimRoot("reloc");
+        Map<String, byte[]> shimEntries = new HashMap<>();
+        rs.injectShims(shimEntries);
+        for (Map.Entry<String, byte[]> en : shimEntries.entrySet()) {
+            String text = new String(en.getValue(), java.nio.charset.StandardCharsets.ISO_8859_1);
+            // strip the class's own relocated name prefix, then ANY remaining
+            // com/modbridge/shim/ occurrence is a missed base-name ref
+            boolean clean = !text.replace("com/modbridge/shim/reloc/", "")
+                    .contains("com/modbridge/shim/");
+            check(clean, "relocated " + en.getKey().substring(en.getKey().lastIndexOf('/') + 1)
+                    + ": no base-name refs (byte-level)");
+        }
+
         // InnerClasses entries: the simple name follows the renamed internal name
         ClassNode innerHost = new ClassNode();
         innerHost.name = "test/InnerHost";
