@@ -19,3 +19,16 @@ net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect
 net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;IIZZ)V=(Lnet/minecraft/core/Holder;IIZZ)V
 net/minecraft/world/effect/MobEffectInstance|<init>|(Lnet/minecraft/world/effect/MobEffect;IIZZZ)V=(Lnet/minecraft/core/Holder;IIZZZ)V
 net/minecraft/world/effect/MobEffectInstance|getEffect|()Lnet/minecraft/world/effect/MobEffect;=()Lnet/minecraft/core/Holder;
+# --- effects lane, entity methods (phase 5.11, VerifyError in the boot-injected
+# ZombieHorse mixin handler): hasEffect/getEffect/removeEffect take Holder<MobEffect>
+# on 21.1; removeEffect also returns void (was MobEffect - applyDescRewrite strips
+# the discard POP). Keys per CALL-SITE static owner (LivingEntity + Player);
+# mixin handlers injected at boot carry translated bytes, so the rewrites cover
+# them. RedMerchantEntity's removeEffect override keeps a stale declared desc
+# (silently non-overriding; its super-call resolves via the desc rewrite).
+net/minecraft/world/entity/LivingEntity|hasEffect|(Lnet/minecraft/world/effect/MobEffect;)Z=(Lnet/minecraft/core/Holder;)Z
+net/minecraft/world/entity/LivingEntity|getEffect|(Lnet/minecraft/world/effect/MobEffect;)Lnet/minecraft/world/effect/MobEffectInstance;=(Lnet/minecraft/core/Holder;)Lnet/minecraft/world/effect/MobEffectInstance;
+net/minecraft/world/entity/LivingEntity|removeEffect|(Lnet/minecraft/world/effect/MobEffect;)Lnet/minecraft/world/effect/MobEffect;=(Lnet/minecraft/core/Holder;)V
+net/minecraft/world/entity/player/Player|hasEffect|(Lnet/minecraft/world/effect/MobEffect;)Z=(Lnet/minecraft/core/Holder;)Z
+net/minecraft/world/entity/player/Player|getEffect|(Lnet/minecraft/world/effect/MobEffect;)Lnet/minecraft/world/effect/MobEffectInstance;=(Lnet/minecraft/core/Holder;)Lnet/minecraft/world/effect/MobEffectInstance;
+net/minecraft/world/entity/player/Player|removeEffect|(Lnet/minecraft/world/effect/MobEffect;)Lnet/minecraft/world/effect/MobEffect;=(Lnet/minecraft/core/Holder;)V
