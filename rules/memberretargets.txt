@@ -60,7 +60,8 @@ net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IFo
 net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|POI_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/Registry;|POINT_OF_INTEREST_TYPE
 
 # --- registry lane, drifted members (same wall ladder): getRegistryKey renamed
-# key() on 21.1 (erased return identical); IForgeRegistry.register(RL,Object)V is a
-# returning STATIC on 21.1 -> "static"-kind void wrapper shim (stack shape kept).
-net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|getRegistryKey -> net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|interface
+# key() on 21.1 (erased return identical) - the NAME rename rides memberrenames.txt
+# (it runs before this lookup); IForgeRegistry.register(RL,Object)V is a returning
+# STATIC on 21.1 -> "static"-kind void wrapper shim (stack shape kept).
+net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|key -> net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|interface
 net/minecraftforge/registries/IForgeRegistry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|static

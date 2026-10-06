@@ -20,3 +20,7 @@ net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/mine
 # 1.20.1 semantic). ~12 sites across supp (integration compat lambdas + ModRegistry)
 # and moonlight; mapSrg resolves the SRG id to 'copy' before this lookup.
 net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|copy=ofLegacyCopy
+# --- phase 5.10 registry lane: IForgeRegistry.getRegistryKey() renamed key() on 21.1
+# (the retarget below then fixes owner+kind; this rename runs first inside
+# applyMemberRenames, so the retarget key carries the NEW name).
+net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|getRegistryKey=key
