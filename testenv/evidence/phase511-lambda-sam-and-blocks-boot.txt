@@ -1,0 +1,90 @@
+# phase 5.11 — indy SAM remap + the blocks/armor/registry/event/effects ladder (2026-10-06, 06:17–07:25)
+
+Matrix 16/16 at close. ~20 more boot iterations on top of phase 5.10. The session's
+task (networking facades) was already done in 5.10; per "fix what falls this run" the
+ladder continued.
+
+## Walls that FELL (in order)
+
+1. **Shapes$DoubleLineConsumer lambda SAM drift (AbstractMethodError at DISPATCH)**:
+   the indy NAME is the implemented SAM method name — lambdas over VANILLA functional
+   interfaces carry 1.20.1 SRG ids there (m_83161_) and the metafactory generates the
+   lambda method under that name. remapInsns' indy branch now does `id.name =
+   mapSrg(id.name)`. Java-interface lambdas never carry SRG names. Offline: zero
+   server-side SRG-named indys left (12 remaining are CLIENT-only SAMs — Button$OnPress,
+   RenderCall, FrameOutput, SpriteParticleRegistration — ids outside the server-scoped
+   SRG table; client SRG coverage remains the deferred item). 2fddd24.
+2. **DoorBlock/TrapDoorBlock ctor param-order swap** ((Properties,BlockSetType) →
+   (BlockSetType,Properties) protected): DoorBlockCompat/TrapDoorBlockCompat shims via
+   superswap (pure forwards; the caller's explicit GOLD/IRON BlockSetType passes
+   through). 9defc1d, a39e395.
+3. **FenceGateBlock** (same family, WoodType swap): FenceGateBlockCompat for
+   IronGateBlock. 5ba4ccf.
+4. **CENSUS LESSON (cost 3 boot iterations)**: superswaps are needed only when the
+   SUBCLASS'S SUPER-CALL DESC differs from the 21.1 parent ctor — javap the super-call
+   desc, NOT the subclass's declared ctor. SkullBlock/WallSkullBlock (skulls),
+   StairBlock/LiquidBlock/SoundType (moonlight resolves its own suppliers) all carry
+   21.1-shaped super-calls — swaps removed, shims deleted. 5e50da5, aa93706, 961c7e3.
+5. **ArmorMaterial** (interface → final RECORD): interface-SWAP superswap form
+   ("interface:<name> -> <shim>") — ArmorMaterialCompat carries the measured 1.20.1
+   surface; ShulkerShellItem's ArmorItem super-call needs BOTH an owner superswap
+   (ArmorItemCompat extends plain Item) AND a desc-widen (material param → Object via
+   memberdescrenames — the verifier checks ARGS against the DESC, so an owner swap
+   alone is insufficient). ea1a867, 60f8be2, d65a733.
+6. **retargetHandle** (0895245): method-ref lambdas put the referenced method in the
+   indy's implMethod Handle bsmArg — invisible to instruction scans, resolved by the
+   metafactory at bootstrap (moonlight's Registry::register method-ref NSME'd).
+   memberretargets now apply to invoke Handles (static-kind rewrites to the shim
+   static, whose receiver-prepended desc matches the metafactory's
+   captured-args+SAM-args adaptation); memberrenames apply too (method-ref renames).
+7. **RegistryCompat.register real + duplicate-tolerant** (b5114a1): the 1.20.1
+   direct-register sites must actually register (the Registrator-path entries exist
+   only there); 1.20.1-legal mod overrides of vanilla ids (supp shulker_shell) throw
+   on 21.1 — existing entry kept, override NOT claimed. (The no-op variant broke
+   the Registrator entries; the duplicate catch was IllegalArgumentException first —
+   the real throw is IllegalStateException.)
+8. **RegistryObject.get() → direct-lookup shim** (af900f2): the typerename
+   RegistryObject→DeferredHolder made every .get() throw "unbound value" for
+   direct-registered entries (holders bind only via the event helper). EntryWrapperCompat
+   queries the registry directly via the holder's key — same value for bound holders,
+   works for the rest. NOTE: moonlight's EntryWrapper rides Supplier INTERFACE dispatch
+   (call-site rules can't see it) — the INNER RegistryObject.get() is the effective
+   retarget point.
+9. **BucketItem** supplier→value ctor drift: BucketItemCompat for LumiseneBucketItem
+   (its real package common/items/forge — package-key miss cost a boot).
+10. **FoodProperties$Builder renames** (saturationMod→saturationModifier via Handle,
+    alwaysEat→alwaysEdible) + **afterItemReg method-drop** (moonlight's duck-typing
+    scan: IExtendedItem is mixin-injected into vanilla classes, which are NOT
+    translated — the bare CHECKCAST CCEs; the surface is unclaimed runtime).
+11. **IContainerFactory exact typerename** — the bare forge→neoforged PACKAGE fallback
+    drops the /neoforge/ segment (the pre-existing bug noted since phase 4, first
+    live hit). net/neoforged/network/IContainerFactory doesn't exist.
+12. **THE EFFECTS HOLDER CASCADE** (00297a5, 4849759, 7b34f3b): 21.1's MobEffects
+    fields are Holder<MobEffect>, MobEffectInstance ctors take Holder, getEffect()
+    returns Holder, LivingEntity/Player hasEffect/getEffect/removeEffect take Holder
+    (removeEffect returns Z — census misread cost a boot). Fixed: 7 field retargets
+    (desc change, new mechanism usage: field retargets swap desc), 4 ctor desc
+    rewrites, getEffect return rewrite, 3 entity-method desc rewrites — PLUS the
+    desc-rewrite "*" owner fallback (the receiver's STATIC type is the owner: mixin
+    handlers and subclasses call this.hasEffect with their OWN class as owner).
+
+## Remaining wall (session boundary, precisely scoped)
+
+`ModBridge: registry value not present: mob_effect/supplementaries:flammable` — supp's
+bucket item supplier queries the flammable effect wrapper during ITEM registration and
+the effect is absent: moonlight's LAZY DeferredRegister creation vs 21.1 registry event
+order (mob_effect event timing vs when supp's effect DeferredRegister is created). The
+1.20.1 wrapper resolved through moonlight's own registry map; the 21.1-native binding
+path doesn't cover the lazy case. NEXT SLICE: make moonlight's RegHelper create its
+DeferredRegisters eagerly (pre-registration), or bridge the wrapper to the supplier
+side. Full stacks in this file + testenv/server-121/logs/latest.log.
+
+## Gates at close
+
+- unit: ctor-retarget 3/3, shims 3/3, srg 4/4, refmap 3/3; matrix 16/16.
+- RUNBOOK: (1) the compound-command heredoc that follows a `grep|head` pipe can
+  silently not execute (the IContainerFactory rule "landed" per commit but never
+  appended — VERIFY rules land with grep after every append); (2) python-edit scripts
+  aborting on a stale assert leave HALF the batch applied — re-check all parts after
+  any abort; (3) rule-value census: super-call descs, not declared ctors; NSME descs
+  are the truth (removeEffect returns Z, not what the override's shape suggested).

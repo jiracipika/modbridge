@@ -1007,3 +1007,41 @@ State at close: moonlight constructs THROUGH registry dispatch; supplementaries
 reaches registry dispatch and dies on the Shapes$DoubleLineConsumer lambda SAM
 drift (next slice: indy bsmArgs SAM rewrite) + a following VerifyError. Gates:
 ctor-retarget 186 checks, shims 232 (52 shims), matrix 16/16.
+
+## Phase 5.11 — indy SAM remap + the blocks/armor/effects ladder (2026-10-06, early morning)
+
+~20 boot iterations (full ladder: testenv/evidence/phase511-lambda-sam-and-blocks-boot.txt):
+
+1. **indy SAM-name remap** (2fddd24): the indy NAME is the implemented functional
+   method — vanilla-interface lambdas carry 1.20.1 SRG ids there (Shapes$
+   DoubleLineConsumer.m_83161_ → AbstractMethodError at dispatch). mapSrg on id.name;
+   java-interface lambdas unaffected. 12 remaining sites are CLIENT-only SAMs.
+2. **Block-ctor drift family**: DoorBlock/TrapDoorBlock/FenceGateBlock param-order
+   swaps (compat shims, pure forwards). CENSUS LESSON: superswap only when the
+   SUPER-CALL desc differs — skulls/stairs/liquids/sound-types carry 21.1-shaped
+   super-calls (moonlight resolves its own suppliers) — 3 swaps removed.
+3. **ArmorMaterial final-record**: interface-SWAP superswap form + ArmorItemCompat
+   (extends plain Item) + the desc-widen lesson (the verifier checks ARGS against
+   the DESC — an owner swap alone is insufficient).
+4. **retargetHandle**: method-ref lambdas' implMethod Handles get the same
+   memberretarget/memberrename treatment (Registry::register NSME'd inside the indy
+   bootstrap — invisible to instruction scans).
+5. **RegistryObject.get() → direct-lookup shim**: the DeferredHolder typerename made
+   every get() throw "unbound value" for direct-registered entries (holders bind only
+   via the event helper); EntryWrapperCompat queries via the holder's key. Also:
+   RegistryCompat.register real + duplicate-tolerant (1.20.1-legal vanilla-id
+   overrides throw on 21.1; existing entry kept).
+6. **The effects holder cascade**: 7 MobEffects field retargets (Holder descs),
+   MobEffectInstance ctor/getEffect desc rewrites, LivingEntity/Player
+   hasEffect/getEffect/removeEffect desc rewrites — PLUS the desc-rewrite "*" owner
+   fallback (the receiver's static type is the owner: mixin handlers and subclasses
+   call this.hasEffect with their own class as owner).
+7. IContainerFactory exact typerename (the bare-fallback segment bug, first live hit),
+   FoodProperties Builder renames, afterItemReg drop (duck-typing surface unclaimed).
+
+State at close: moonlight constructs and runs its full registry dispatch; supp
+constructs through the block/item registration and dies at the LAST measured wall —
+`registry value not present: mob_effect/supplementaries:flammable` (moonlight's lazy
+DeferredRegister creation vs 21.1 registry event order — next slice: eager
+DeferredRegister creation or supplier-side bridging). Gates: all 4 unit scripts
+green, matrix 16/16, 59 shims.
