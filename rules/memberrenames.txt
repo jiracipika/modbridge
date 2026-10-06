@@ -34,3 +34,5 @@ net/minecraft/world/level/block/state/BlockBehaviour$Properties|()Lnet/minecraft
 # --- phase 5.11: FoodProperties$Builder.saturationMod renamed saturationModifier on
 # 1.20.5+ (fires inside a method-ref lambda Handle - retargetHandle applies this).
 net/minecraft/world/food/FoodProperties$Builder|(F)Lnet/minecraft/world/food/FoodProperties$Builder;|saturationMod=saturationModifier
+# --- phase 5.11: FoodProperties$Builder.alwaysEat renamed alwaysEdible on 1.20.5+.
+net/minecraft/world/food/FoodProperties$Builder|()Lnet/minecraft/world/food/FoodProperties$Builder;|alwaysEat=alwaysEdible
