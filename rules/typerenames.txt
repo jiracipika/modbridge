@@ -198,3 +198,14 @@ net/minecraftforge/network/PacketDistributor$TargetPoint	@SHIM@/PacketDistributo
 # claimed. IIngredientSerializer family still deferred (no boot hit yet).
 net/minecraft/world/item/Vanishable	@SHIM@/Vanishable
 net/minecraftforge/common/crafting/AbstractIngredient	@SHIM@/AbstractIngredient
+
+# --- removed-API ladder, iteration 2 (phase 5.10, post-networking boot walls):
+# RecordItem (gone - discs are data-driven JUKEBOX_SONG on 21.1; supp PancakeItem
+# EXTENDS it with the (int,SoundEvent,Item$Properties,int) super-ctor + one useOn
+# super-call, INSTANCEOF in ModCreativeTabs, moonlight newMusicDisc return type) ->
+# shim extends the REAL 21.1 Item so the useOn super-call stays live; disc
+# registration itself NOT claimed. IIngredientSerializer<T> (gone - codecs; single
+# implementer moonlight BlockTypeSwapIngredientImpl$1, parse/parse/write shapes) ->
+# interface shim; registration + JSON recipes NOT claimed.
+net/minecraft/world/item/RecordItem	@SHIM@/RecordItem
+net/minecraftforge/common/crafting/IIngredientSerializer	@SHIM@/IIngredientSerializer

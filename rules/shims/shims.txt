@@ -1,6 +1,7 @@
 com/modbridge/shim/AbstractIngredient
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
+com/modbridge/shim/IIngredientSerializer
 com/modbridge/shim/MessageHandler
 com/modbridge/shim/NetworkDirection
 com/modbridge/shim/NetworkEvent$Context
@@ -9,6 +10,7 @@ com/modbridge/shim/ObfuscationReflectionHelper
 com/modbridge/shim/PacketDistributor
 com/modbridge/shim/PacketDistributor$PacketTarget
 com/modbridge/shim/PacketDistributor$TargetPoint
+com/modbridge/shim/RecordItem
 com/modbridge/shim/ResourceLocationCompat
 com/modbridge/shim/SimpleChannelCompat
 com/modbridge/shim/Vanishable

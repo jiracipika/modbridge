@@ -607,6 +607,31 @@ public final class ShimFacadeTest {
         Class<?> mh = com.modbridge.shim.MessageHandler.class;
         check(mh.getSuperclass() == Object.class && mh.getInterfaces().length == 0,
                 "MessageHandler: bare marker class (the erased registerMessage return)");
+
+        // removed-API ladder: RecordItem extends the REAL Item (useOn super-call stays
+        // live) with the measured 4-arg ctor; IIngredientSerializer carries the
+        // parse/parse/write shapes (byte-level: invoking signatures would pull
+        // Ingredient/FriendlyByteBuf loading)
+        Class<?> ri = com.modbridge.shim.RecordItem.class;
+        check(ri.getSuperclass() == net.minecraft.world.item.Item.class,
+                "RecordItem shim: extends the real 21.1 Item");
+        try {
+            check(ri.getConstructor(int.class, net.minecraft.sounds.SoundEvent.class,
+                    net.minecraft.world.item.Item.Properties.class, int.class) != null,
+                    "RecordItem: measured (int,SoundEvent,Properties,int) super-ctor surface");
+        } catch (NoSuchMethodException e) {
+            check(false, "RecordItem: measured ctor surface");
+        }
+        ClassNode iisNode = new ClassNode();
+        new ClassReader(java.nio.file.Files.readAllBytes(
+                Path.of("rules/shims/com/modbridge/shim/IIngredientSerializer.class")))
+                .accept(iisNode, 0);
+        java.util.Set<String> iisSigs = new java.util.HashSet<>();
+        for (MethodNode m : iisNode.methods) iisSigs.add(m.name + m.desc);
+        check(iisSigs.contains("parse(Lnet/minecraft/network/FriendlyByteBuf;)Lnet/minecraft/world/item/crafting/Ingredient;")
+                        && iisSigs.contains("parse(Lcom/google/gson/JsonObject;)Lnet/minecraft/world/item/crafting/Ingredient;")
+                        && iisSigs.contains("write(Lnet/minecraft/network/FriendlyByteBuf;Lnet/minecraft/world/item/crafting/Ingredient;)V"),
+                "IIngredientSerializer: parse/parse/write erased shapes (byte-level)");
     }
 
     // ------------------------------------------------------- rules-level + injection
@@ -614,7 +639,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 40, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient)");
+        check(r.shims.size() == 42, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient, RecordItem, IIngredientSerializer)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -713,13 +738,19 @@ public final class ShimFacadeTest {
         check(r.remapType("net/minecraftforge/common/crafting/AbstractIngredient")
                         .equals("com/modbridge/shim/testmod/AbstractIngredient"),
                 "rules: AbstractIngredient -> carrier shim");
+        check(r.remapType("net/minecraft/world/item/RecordItem")
+                        .equals("com/modbridge/shim/testmod/RecordItem"),
+                "rules: RecordItem -> Item-extending shim");
+        check(r.remapType("net/minecraftforge/common/crafting/IIngredientSerializer")
+                        .equals("com/modbridge/shim/testmod/IIngredientSerializer"),
+                "rules: IIngredientSerializer -> interface shim");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 40, "injectShims(): all 40 shims present under the per-mod package");
+        check(entries.size() == 42, "injectShims(): all 42 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),
