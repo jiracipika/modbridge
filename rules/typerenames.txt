@@ -224,3 +224,10 @@ net/minecraft/world/level/block/GravelBlock	@SHIM@/GravelBlock
 # each: GETSTATIC VERY_RARE / GETSTATIC CROSSBOW).
 net/minecraft/world/item/enchantment/Enchantment$Rarity	@SHIM@/Enchantment$Rarity
 net/minecraft/world/item/enchantment/EnchantmentCategory	@SHIM@/EnchantmentCategory
+
+# --- removed-API ladder, iteration 4 (phase 5.10): the dyeable family went to data
+# components on 21.1 (no Dyeable* classes remain). Measured: QuiverItem implements
+# DyeableLeatherItem; SoapClearRecipe checkcasts + clearColor; ClientRegistry
+# (client-only) getColor/hasCustomColor. INERT defaults (no component store bridged).
+net/minecraft/world/item/DyeableItem	@SHIM@/DyeableItem
+net/minecraft/world/item/DyeableLeatherItem	@SHIM@/DyeableLeatherItem
