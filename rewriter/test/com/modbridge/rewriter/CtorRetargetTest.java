@@ -407,6 +407,11 @@ public final class CtorRetargetTest {
                     .contains("com/modbridge/shim/");
             check(clean, "relocated " + en.getKey().substring(en.getKey().lastIndexOf('/') + 1)
                     + ": no base-name refs (byte-level)");
+            // and no DOTTED binary names: a dotted InnerClasses outer-name constant
+            // is ClassFormatError "Illegal class name" at define time (EntityItemPickupEvent\$Result)
+            boolean noDotted = !text.contains("com.modbridge.shim.");
+            check(noDotted, "relocated " + en.getKey().substring(en.getKey().lastIndexOf('/') + 1)
+                    + ": no dotted binary names (byte-level)");
         }
 
         // InnerClasses entries: the simple name follows the renamed internal name

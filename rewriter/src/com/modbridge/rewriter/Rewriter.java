@@ -452,11 +452,15 @@ public class Rewriter {
         return out;
     }
 
-    /** binary-name (dots) form used by InnerClassNode outer/inner names */
+    /** relocates InnerClasses outer/inner names. The MAPPED name must stay SLASHED:
+     *  ClassWriter emits the outer_name as a raw Class constant without converting
+     *  dots, and a dotted constant = ClassFormatError "Illegal class name" at define
+     *  (live-boot: the first NAMED nested shim class, EntityItemPickupEvent\$Result;
+     *  anonymous nesteds have null outer names and never hit this). */
     private static String relocateSimpleAware(String dotted, Map<String, String> names) {
         String slashed = dotted.replace('.', '/');
         String replaced = names.get(slashed);
-        return replaced != null ? replaced.replace('/', '.') : dotted;
+        return replaced != null ? replaced : dotted;
     }
 
     private void addClasslist(List<String> lines) {
