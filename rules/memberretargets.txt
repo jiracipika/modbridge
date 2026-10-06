@@ -101,3 +101,11 @@ net/minecraft/core/Registry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lan
 # direct-registered entries). Static-kind receiver-prepended shim doing a DIRECT
 # registry lookup via the holder's key (1.20.1 eager semantics).
 net/mehvahdjukaar/moonlight/api/platform/forge/RegHelperImpl$EntryWrapper|()Ljava/lang/Object;|get -> @SHIM@/EntryWrapperCompat|(Lnet/mehvahdjukaar/moonlight/api/platform/forge/RegHelperImpl$EntryWrapper;)Ljava/lang/Object;|static
+
+# --- registry lane, the EFFECTIVE query-side rule (phase 5.11): every 1.20.1
+# RegistryObject.get() became DeferredHolder.get() (typerename) and throws
+# "unbound value" for direct-registered entries. The direct-registry-lookup shim
+# returns the same value for bound holders, so this GLOBAL retarget is safe and
+# faithful (1.20.1 RegistryObject.get() was itself a direct registry query).
+# Value desc written in FINAL space (DeferredHolder) - the shim compiles against it.
+net/minecraftforge/registries/RegistryObject|()Ljava/lang/Object;|get -> @SHIM@/EntryWrapperCompat|(Lnet/neoforged/neoforge/registries/DeferredHolder;)Ljava/lang/Object;|static
