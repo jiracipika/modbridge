@@ -90,3 +90,23 @@ net/minecraft/world/level/storage/loot/functions/LootItemConditionalFunction$Ser
 net/minecraft/world/level/storage/loot/predicates/LootItemConditionType	@SHIM@/LootItemConditionType
 net/minecraft/world/level/storage/loot/entries/LootPoolEntryType	@SHIM@/LootPoolEntryType
 net/minecraft/world/level/storage/loot/functions/LootItemFunctionType	@SHIM@/LootItemFunctionType
+# --- conditions lane (phase 5.6 follow-up): the crafting-condition serializer family.
+# Forge 1.20.1's IConditionSerializer (Gson read/write/getID) is GONE on NeoForge 21.1
+# even after the standard package rename (javap-verified: absent from the universal
+# jar; conditions register MapCodecs into NeoForgeRegistries.Keys.CONDITION_CODECS and
+# dispatch via ICondition.CODEC). Phase 1 deliberately left it unmapped, so the bare
+# forge->neoforged fallback renamed refs to a phantom — and the live boot died with
+# NoClassDefFoundError when RegHelper (the generic registration helper) got LINKED:
+# verifying its registerSimpleRecipeCondition body forces the assignability
+# constraint OptionalRecipeCondition <: IConditionSerializer, resolving the phantom.
+# Measured surface (moonlight 2.16.10 + supplementaries 3.1.38): IConditionSerializer
+# implementers = 1 (moonlight OptionalRecipeCondition, with ICondition-erased bridges
+# that match the shim's <T extends ICondition> erasure exactly); CraftingHelper
+# members called = register(IConditionSerializer) [boot wall] + getCondition(JsonObject)
+# [PlatHelperImpl, TemplateRecipeManagerImpl]; the CraftingHelper ingredient members
+# (register/getID with IIngredientSerializer) belong to the still-phantom ingredient
+# family — deliberately not carried (deferred lane). ICondition/ICondition$IContext
+# already map to the real 21.1 interface (test/IContext/EMPTY kept; getID dropped by
+# the fork — no cross-type caller measured).
+net/minecraftforge/common/crafting/conditions/IConditionSerializer	@SHIM@/IConditionSerializer
+net/minecraftforge/common/crafting/CraftingHelper	@SHIM@/CraftingHelper

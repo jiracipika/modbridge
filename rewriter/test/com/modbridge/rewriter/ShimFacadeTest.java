@@ -55,6 +55,7 @@ public final class ShimFacadeTest {
         runtimeSemantics();
         descriptorExactness();
         lootShimExactness();
+        conditionShimExactness();
         rulesAndInjection();
     }
 
@@ -295,12 +296,85 @@ public final class ShimFacadeTest {
         return dims == 0 ? base : "[".repeat(dims) + base;
     }
 
+    // ------------------------------------------------- condition-lane shims (phase 5.6 follow-up)
+
+    /**
+     * The conditions lane's measured surface: Forge 1.20.1's IConditionSerializer
+     * (Gson read/write/getID) is gone on 21.1 even after the package rename, and
+     * the real 21.1 CraftingHelper lost every member the mods call. The shim keeps
+     * the 1.20.1 serializer surface (the translated implementer's ICondition-erased
+     * bridges match exactly) and a register()-into-inert-registry + working
+     * getCondition bridge (ICondition.CODEC dispatch for known types).
+     */
+    void conditionShimExactness() throws Exception {
+        Class<?> ser = Class.forName("net.neoforged.neoforge.common.conditions.IConditionSerializer");
+        check(ser.isInterface(), "IConditionSerializer shim: interface");
+        check(desc(ser, "write").equals("(Lcom/google/gson/JsonObject;Lnet/neoforged/neoforge/common/conditions/ICondition;)V"),
+                "IConditionSerializer.write: erased <T extends ICondition> bridge shape");
+        check(desc(ser, "read").equals("(Lcom/google/gson/JsonObject;)Lnet/neoforged/neoforge/common/conditions/ICondition;"),
+                "IConditionSerializer.read: erased bridge return");
+        check(desc(ser, "getID").equals("()Lnet/minecraft/resources/ResourceLocation;"),
+                "IConditionSerializer.getID: 1.20.1 surface");
+        check(methodNamed(ser, "getJson", 1).getParameterTypes()[0]
+                == net.neoforged.neoforge.common.conditions.ICondition.class,
+                "IConditionSerializer.getJson: default surface parity (erased to the ICondition bound)");
+
+        Class<?> ch = Class.forName("net.neoforged.neoforge.common.crafting.CraftingHelper");
+        check(desc(ch, "register").equals("(Lnet/neoforged/neoforge/common/conditions/IConditionSerializer;)Lnet/neoforged/neoforge/common/conditions/IConditionSerializer;"),
+                "CraftingHelper.register: 1.20.1 condition overload shape (the boot-wall member)");
+        check(desc(ch, "getCondition").equals("(Lcom/google/gson/JsonObject;)Lnet/neoforged/neoforge/common/conditions/ICondition;"),
+                "CraftingHelper.getCondition: 1.20.1 shape");
+
+        // runtime semantics: getCondition's loud contract. The FAITHFUL half (known
+        // types parse via ICondition.CODEC) needs NeoForge's registry bootstrap — it
+        // is live-boot territory; offline we can only prove (1) class-init is safe
+        // (no ICondition.CODEC dependency until getCondition is CALLED) and (2) a
+        // translated condition type fails LOUDLY naming the id (true offline AND at
+        // boot: translated types have no codec registered).
+        Object unusedInit = ch.getDeclaredMethod("registeredConditionSerializers").invoke(null);
+        check(unusedInit != null, "CraftingHelper: class-init safe offline (inert registry only)");
+        com.google.gson.JsonObject unknown = new com.google.gson.JsonObject();
+        unknown.addProperty("type", "moonlight:some_translated_condition");
+        try {
+            ch.getDeclaredMethod("getCondition", com.google.gson.JsonObject.class).invoke(null, unknown);
+            check(false, "getCondition: translated-type JSON fails loudly");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            check(e.getCause() instanceof IllegalStateException
+                    && e.getCause().getMessage().contains("moonlight:some_translated_condition"),
+                    "getCondition: translated-type JSON fails loudly with the condition id");
+        }
+
+        // runtime semantics: register() keeps the return-value contract + stores by id.
+        java.util.Map<?, ?> before = (java.util.Map<?, ?>) ch.getDeclaredMethod("registeredConditionSerializers")
+                .invoke(null);
+        int sizeBefore = before.size();
+        Object serializer = java.lang.reflect.Proxy.newProxyInstance(ser.getClassLoader(), new Class<?>[] {ser},
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        // getID returns null on purpose: constructing a real
+                        // ResourceLocation triggers the vanilla static-init cascade
+                        // (DFU/fastutil/netty) which only exists in a full server env;
+                        // the shim only uses the id as an inert map key.
+                        case "getID": return null;
+                        case "write": return null;
+                        case "read": return null;
+                        case "getJson": return new com.google.gson.JsonObject();
+                        default: return method.getDefaultValue();
+                    }
+                });
+        Object returned = ch.getDeclaredMethod("register", ser).invoke(null, serializer);
+        check(returned == serializer, "CraftingHelper.register: returns the serializer (1.20.1 contract)");
+        java.util.Map<?, ?> after = (java.util.Map<?, ?>) ch.getDeclaredMethod("registeredConditionSerializers")
+                .invoke(null);
+        check(after.size() == sizeBefore + 1, "CraftingHelper.register: stored in the inert registry");
+    }
+
     // ------------------------------------------------------- rules-level + injection
 
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 24, "rules/shims: manifest loads 24 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes)");
+        check(r.shims.size() == 26, "rules/shims: manifest loads 26 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -336,6 +410,19 @@ public final class ShimFacadeTest {
         check(r.remapDesc("(Lnet/minecraft/world/level/storage/loot/Serializer;)V")
                         .equals("(Lcom/modbridge/shim/testmod/LootSerializer;)V"),
                 "rules: loot ctor desc remap (implementers keep the erased bridge shapes)");
+        // conditions lane: the phantom-renamed serializer family resolves to the per-mod shims
+        check(r.remapType("net/minecraftforge/common/crafting/conditions/IConditionSerializer")
+                        .equals("com/modbridge/shim/testmod/IConditionSerializer"),
+                "rules: IConditionSerializer -> per-mod shim (no more package-rename phantom)");
+        check(r.remapType("net/minecraftforge/common/crafting/CraftingHelper")
+                        .equals("com/modbridge/shim/testmod/CraftingHelper"),
+                "rules: CraftingHelper -> per-mod shim (real 21.1 CraftingHelper untouched for platform code)");
+        check(r.remapType("net/minecraftforge/common/crafting/conditions/ICondition")
+                        .equals("net/neoforged/neoforge/common/conditions/ICondition"),
+                "rules: ICondition still maps to the real 21.1 interface (not the shim)");
+        check(r.remapDesc("(Lnet/minecraftforge/common/crafting/conditions/IConditionSerializer;)Lnet/minecraftforge/common/crafting/conditions/IConditionSerializer;")
+                        .equals("(Lcom/modbridge/shim/testmod/IConditionSerializer;)Lcom/modbridge/shim/testmod/IConditionSerializer;"),
+                "rules: CraftingHelper.register desc remaps whole (the boot-wall constant)");
         check(r.memberRenames.containsKey("net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction"),
                 "rules: getToolAction=getItemAbility memberrename present");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
@@ -344,7 +431,7 @@ public final class ShimFacadeTest {
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 24, "injectShims(): all 24 shims present under the per-mod package");
+        check(entries.size() == 26, "injectShims(): all 26 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),
