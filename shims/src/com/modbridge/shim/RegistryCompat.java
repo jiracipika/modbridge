@@ -15,11 +15,25 @@ import net.minecraft.resources.ResourceLocation;
  */
 public final class RegistryCompat {
 
+    private static boolean warned = false;
+
     private RegistryCompat() {
     }
 
-    /** 1.20.1 {@code IForgeRegistry.register} surface — delegates to the 21.1 static. */
+    /** 1.20.1 {@code IForgeRegistry.register} surface — delegates to the 21.1 static.
+     *  DUPLICATE-TOLERANT: 1.20.1 forge allowed mod overrides of existing ids
+     *  (supp shulker_shell); 21.1 throws "Adding duplicate key". Overrides are NOT
+     *  claimed — the duplicate is logged once and the existing entry kept, so the
+     *  registry dispatch completes and boot proceeds. */
     public static void register(Registry<Object> registry, ResourceLocation id, Object value) {
-        Registry.register(registry, id, value);
+        try {
+            Registry.register(registry, id, value);
+        } catch (IllegalArgumentException duplicate) {
+            if (!warned) {
+                warned = true;
+                System.out.println("[ModBridge shim] duplicate registry key kept existing entry: "
+                        + id + " (" + duplicate.getMessage() + ")");
+            }
+        }
     }
 }

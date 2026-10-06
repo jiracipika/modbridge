@@ -1875,7 +1875,7 @@ public class Rewriter {
                         if (id.bsmArgs[i] instanceof Type ty) {
                             id.bsmArgs[i] = Type.getType(remapDesc(ty.getDescriptor()));
                         } else if (id.bsmArgs[i] instanceof Handle h) {
-                            id.bsmArgs[i] = remapHandle(h);
+                            id.bsmArgs[i] = retargetHandle(remapHandle(h));
                         }
                     }
                 }
@@ -1892,6 +1892,24 @@ public class Rewriter {
     }
 
     /** SRG member ids are globally unique, so a bare name table is safe to apply anywhere */
+    /** METHOD-REF lambdas: javac emits the referenced method as the indy's
+     *  implMethod Handle bsmArg — invisible to call-site scans, resolved by the
+     *  metafactory at indy bootstrap (NSME "Registry.register(RL,Object)" from
+     *  moonlight's Registry::register method ref). Apply the same memberretarget
+     *  rules to the Handle: static-kind rules rewrite it to the shim static, whose
+     *  receiver-prepended desc exactly matches the metafactory's captured-args +
+     *  SAM-args adaptation (the receiver was captured by the indy). */
+    Handle retargetHandle(Handle h) {
+        if (h.getTag() != Opcodes.H_INVOKEVIRTUAL && h.getTag() != Opcodes.H_INVOKESTATIC
+                && h.getTag() != Opcodes.H_INVOKEINTERFACE && h.getTag() != Opcodes.H_INVOKESPECIAL) {
+            return h;
+        }
+        String[] retarget = memberRetargets.get(h.getOwner() + "|" + h.getDesc() + "|" + h.getName());
+        if (retarget == null) return h;
+        return new Handle(Opcodes.H_INVOKESTATIC, resolveShimTarget(retarget[0]),
+                h.getName(), retarget[1], false);
+    }
+
     String mapSrg(String name) {
         String mapped = srgMemberRenames.get(name);
         return mapped != null ? mapped : name;
