@@ -48,17 +48,19 @@ net/minecraft/resources/ResourceLocation|(Ljava/lang/String;)Z|isValidResourceLo
 # wholesale ForgeRegistries -> NeoForgeRegistries mapping is right for forge-only
 # keys (GLOBAL_LOOT_MODIFIER_SERIALIZERS...) but WRONG for vanilla keys - 21.1 keeps
 # those in BuiltInRegistries with SINGULAR names (ITEM/BLOCK/ENTITY_TYPE/FLUID/
-# POINT_OF_INTEREST_TYPE). Keys are POST-remap space (owner already NeoForgeRegistries,
-# desc already IForgeRegistry -> Registry via the typerename). 5 measured sites, all
-# moonlight. memberretargets now covers FieldInsnNode (owner+desc swap, opcode kept).
-net/neoforged/neoforge/registries/NeoForgeRegistries|Lnet/minecraft/core/Registry;|ITEMS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ITEMS
-net/neoforged/neoforge/registries/NeoForgeRegistries|Lnet/minecraft/core/Registry;|BLOCKS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|BLOCKS
-net/neoforged/neoforge/registries/NeoForgeRegistries|Lnet/minecraft/core/Registry;|ENTITY_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ENTITY_TYPE
-net/neoforged/neoforge/registries/NeoForgeRegistries|Lnet/minecraft/core/Registry;|FLUIDS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|FLUID
-net/neoforged/neoforge/registries/NeoForgeRegistries|Lnet/minecraft/core/Registry;|POI_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/Registry;|POINT_OF_INTEREST_TYPE
+# POINT_OF_INTEREST_TYPE). NOTE: applyMemberRenames runs BEFORE remapClass in
+# transform(), so ALL keys here are ORIGINAL-space (the setCanceled rules above were
+# already so). 5 measured sites, all moonlight. memberretargets now covers
+# FieldInsnNode (owner+desc swap, opcode kept). New owner/desc values are final-space
+# vanilla (remapClass leaves them untouched).
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|ITEMS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ITEMS
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|BLOCKS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|BLOCKS
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|ENTITY_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|ENTITY_TYPE
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|FLUIDS -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|FLUID
+net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IForgeRegistry;|POI_TYPES -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/Registry;|POINT_OF_INTEREST_TYPE
 
 # --- registry lane, drifted members (same wall ladder): getRegistryKey renamed
 # key() on 21.1 (erased return identical); IForgeRegistry.register(RL,Object)V is a
 # returning STATIC on 21.1 -> "static"-kind void wrapper shim (stack shape kept).
-net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|getRegistryKey -> net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|key|interface
-net/minecraft/core/Registry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register|static
+net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|getRegistryKey -> net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|interface
+net/minecraftforge/registries/IForgeRegistry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|static
