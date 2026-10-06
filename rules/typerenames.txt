@@ -189,3 +189,12 @@ net/minecraftforge/network/NetworkDirection	@SHIM@/NetworkDirection
 net/minecraftforge/network/PacketDistributor	@SHIM@/PacketDistributor
 net/minecraftforge/network/PacketDistributor$PacketTarget	@SHIM@/PacketDistributor$PacketTarget
 net/minecraftforge/network/PacketDistributor$TargetPoint	@SHIM@/PacketDistributor$TargetPoint
+
+# --- removed-API ladder (phase 5.10, live-boot walls after networking fell):
+# Vanishable (vanilla marker interface, GONE on 1.21.1, single implementer supp
+# SlingshotItem) and forge AbstractIngredient (GONE; 21.1 Ingredient is FINAL so
+# the carrier cannot extend it; single subclass moonlight BlockTypeSwapIngredientImpl
+# via no-arg super-ctor + invalidate()). Both INERT: linking only, behavior NOT
+# claimed. IIngredientSerializer family still deferred (no boot hit yet).
+net/minecraft/world/item/Vanishable	@SHIM@/Vanishable
+net/minecraftforge/common/crafting/AbstractIngredient	@SHIM@/AbstractIngredient
