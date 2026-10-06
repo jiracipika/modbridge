@@ -19,4 +19,4 @@ net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/mine
 # on 21.1 -> ofLegacyCopy (same desc; ofFullCopy also exists but legacy matches the
 # 1.20.1 semantic). ~12 sites across supp (integration compat lambdas + ModRegistry)
 # and moonlight; mapSrg resolves the SRG id to 'copy' before this lookup.
-net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|copy = ofLegacyCopy
+net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|copy=ofLegacyCopy
