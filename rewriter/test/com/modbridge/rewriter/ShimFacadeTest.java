@@ -710,6 +710,9 @@ public final class ShimFacadeTest {
                 "rules: criteria super-ctor desc remaps whole");
         check(r.memberRenames.containsKey("net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction"),
                 "rules: getToolAction=getItemAbility memberrename present");
+        check(r.memberRenames.containsKey(
+                "net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|copy"),
+                "rules: Properties.copy = ofLegacyCopy memberrename present");
         // DFU drift lane: the static-kind rules landed in memberretargets.txt
         check(r.memberRetargets.get(
                         "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow")[2]

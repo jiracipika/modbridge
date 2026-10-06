@@ -15,3 +15,8 @@ net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216337_=cr
 net/minecraft/util/RandomSource|()Lnet/minecraft/util/RandomSource;|m_216343_=createNewThreadLocalInstance
 # BlockToolModificationEvent accessor renamed in the fork (ToolAction -> ItemAbility).
 net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction=getItemAbility
+# --- phase 5.10: BlockBehaviour$Properties.copy(BlockBehaviour) (m_60926_) renamed
+# on 21.1 -> ofLegacyCopy (same desc; ofFullCopy also exists but legacy matches the
+# 1.20.1 semantic). ~12 sites across supp (integration compat lambdas + ModRegistry)
+# and moonlight; mapSrg resolves the SRG id to 'copy' before this lookup.
+net/minecraft/world/level/block/state/BlockBehaviour$Properties|(Lnet/minecraft/world/level/block/state/BlockBehaviour;)Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|copy = ofLegacyCopy
