@@ -28,3 +28,6 @@ net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/Resource
 # owner+desc; these carry the names, applied first inside applyMemberRenames).
 net/minecraftforge/registries/RegisterEvent|()Lnet/minecraft/core/Registry;|getVanillaRegistry=getRegistry
 net/minecraftforge/registries/RegisterEvent|()Lnet/minecraftforge/registries/IForgeRegistry;|getForgeRegistry=getRegistry
+# --- phase 5.10: Properties.noParticlesOnBreak() renamed noTerrainParticles() on
+# 21.1 (same desc, same semantics - the spawnTerrainParticles flag).
+net/minecraft/world/level/block/state/BlockBehaviour$Properties|()Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;|noParticlesOnBreak=noTerrainParticles

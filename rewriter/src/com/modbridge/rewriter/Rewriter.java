@@ -301,6 +301,18 @@ public class Rewriter {
         return resolveShimTarget(swap[1]);
     }
 
+    /** INTERFACE-STRIP (superswaps.txt, rule key "interface:<name> -> REMOVE"): drops
+     *  a renamed-away interface from a class's implements list. Use case: a 1.20.1
+     *  INTERFACE whose typerename target is a 21.1 CLASS (BlockSource -> the dispense
+     *  context record) - the rename is right for behavior PARAMS but breaks any class
+     *  still IMPLEMENTing it (ICCE "can not implement ... not an interface"). */
+    boolean stripInterface(String className, String itf) {
+        String[] swap = superSwaps.get(className);
+        if (swap == null || !swap[0].equals("interface:" + itf)) return false;
+        superswapsApplied++;
+        return true;
+    }
+
     /** resolves the "@SHIM@/<SimpleName>" placeholder used in typerenames targets */
     String resolveShimTarget(String mapped) {
         if (mapped != null && mapped.startsWith("@SHIM@/")) {
@@ -530,7 +542,9 @@ public class Rewriter {
      *  equals oldSuper (never guessed). Optional file - absent = no swaps. */
     void addSuperSwapRules(List<String> lines) throws IOException {
         for (String line : lines) {
-            if (line.startsWith("#")) continue;
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#")) continue;
+            line = t;
             String[] sides = line.split("->");
             if (sides.length != 2) throw new IOException("bad superswap line: " + line);
             String[] key = sides[0].trim().split("\\|");
@@ -601,7 +615,10 @@ public class Rewriter {
     /** CLI variant that tolerates a missing optional rule file (empty list). */
     private List<String> readLinesOptional(java.nio.file.Path file) throws IOException {
         if (!java.nio.file.Files.exists(file)) return new java.util.ArrayList<>();
-        return java.nio.file.Files.readAllLines(file);
+        return java.nio.file.Files.readAllLines(file).stream()
+                .map(String::trim)
+                .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                .toList();
     }
 
     private static List<String> resourceLines(String path) throws IOException {
@@ -1738,6 +1755,10 @@ public class Rewriter {
 
     void remapClass(ClassNode cn) {
         cn.name = remapType(cn.name);
+        // interface-strip first (guards on the REMAPPED name, like superswaps)
+        if (cn.interfaces != null) {
+            cn.interfaces.removeIf(itf -> stripInterface(cn.name, itf));
+        }
         cn.superName = remapType(cn.superName);
         String beforeSuperSwap = cn.superName;
         cn.superName = applySuperSwap(cn.name, cn.superName);

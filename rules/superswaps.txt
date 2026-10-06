@@ -7,3 +7,13 @@
 # class defines and the instance floats through erased registration paths;
 # behavior of the reworked subsystem is NOT claimed.
 net/mehvahdjukaar/supplementaries/common/misc/StasisEnchantment|net/minecraft/world/item/enchantment/Enchantment -> @SHIM@/EnchantmentCompat
+
+# INTERFACE-STRIP form (phase 5.10): "interface:<remapped-name> -> REMOVE" drops that
+# interface from the class's implements list. MovingBlockSource implements 1.20.1's
+# core/BlockSource INTERFACE; the vanilla-renames table maps that name to 21.1's
+# core/dispenser/BlockSource (the dispense-context RECORD - correct for behavior
+# PARAMS, which makes translated DispenseItemBehaviors true implementers) - but the
+# rename lands in MovingBlockSource's implements list too, and a class cannot
+# implement a non-interface (ICCE at define). Runtime-path class; the strip is
+# boot-only relief (minecart dispensing NOT claimed).
+net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/MovingBlockSource|interface:net/minecraft/core/dispenser/BlockSource -> REMOVE
