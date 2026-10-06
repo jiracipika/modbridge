@@ -70,6 +70,8 @@ public final class CtorRetargetTest {
         realRuleFileResolvesThroughShim();
         methodDrops();
         realMethodDropsLoad();
+        interfaceCallSites();
+        interfaceInventoryMissingFileTolerated();
     }
 
     Rewriter rewriterWithRule() throws IOException {
@@ -319,6 +321,109 @@ public final class CtorRetargetTest {
         check(r.methodDrops.contains(
                 "net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|loadFromFile"),
                 "loadFromFile() drop present");
+    }
+
+    // ------------------------------------------- interface call-site repair pass
+
+    /** host with one call site per drifted shape against DFU types: DataResult is a
+     *  21.1 interface (inventoried), Pair stayed a class (not inventoried) */
+    ClassNode driftHost() {
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Drift";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "sites", "(Lcom/mojang/serialization/DataResult;)V", null, null);
+        // 0: invokestatic DataResult.success (itf=false) — the live-boot ICCE
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                "com/mojang/serialization/DataResult", "success",
+                "(Ljava/lang/Object;)Lcom/mojang/serialization/DataResult;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        // 1: already-repaired static (itf=true) — must stay untouched
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                "com/mojang/serialization/DataResult", "error",
+                "(Ljava/util/function/Supplier;)Lcom/mojang/serialization/DataResult;", true));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        // 2: invokevirtual DataResult.map (itf=false) — "Found interface, but class"
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult", "map",
+                "(Ljava/util/function/Function;)Lcom/mojang/serialization/DataResult;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        // 3: invokevirtual DataResult.equals — Object member via interface owner
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "com/mojang/serialization/DataResult", "equals",
+                "(Ljava/lang/Object;)Z", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        // 4: invokestatic Pair.of — owner stayed a class, must stay untouched
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                "com/mojang/datafixers/util/Pair", "of",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Lcom/mojang/datafixers/util/Pair;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.maxStack = 4;
+        cn.methods.add(mn);
+        return cn;
+    }
+
+    void interfaceCallSites() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules")); // real inventory: DataResult in, Pair out
+        ClassNode cn = driftHost();
+        r.repairInterfaceCallSites(cn);
+        MethodNode mn = cn.methods.get(0);
+        MethodInsnNode staticSuccess = first(mn, MethodInsnNode.class,
+                m -> "success".equals(m.name));
+        check(staticSuccess != null && staticSuccess.getOpcode() == Opcodes.INVOKESTATIC && staticSuccess.itf,
+                "invokestatic on inventoried interface -> InterfaceMethodref (itf=true)");
+        MethodInsnNode errorItf = first(mn, MethodInsnNode.class, m -> "error".equals(m.name));
+        check(errorItf != null && errorItf.getOpcode() == Opcodes.INVOKESTATIC && errorItf.itf,
+                "already-interface static site left untouched");
+        MethodInsnNode map = first(mn, MethodInsnNode.class, m -> "map".equals(m.name));
+        check(map != null && map.getOpcode() == Opcodes.INVOKEINTERFACE && map.itf,
+                "invokevirtual on interface member -> invokeinterface + itf=true");
+        MethodInsnNode equals = first(mn, MethodInsnNode.class, m -> "equals".equals(m.name));
+        check(equals != null && "java/lang/Object".equals(equals.owner)
+                        && equals.getOpcode() == Opcodes.INVOKEVIRTUAL && !equals.itf,
+                "Object member named through interface owner -> java/lang/Object owner");
+        MethodInsnNode pairOf = first(mn, MethodInsnNode.class, m -> "of".equals(m.name));
+        check(pairOf != null && pairOf.getOpcode() == Opcodes.INVOKESTATIC && !pairOf.itf,
+                "non-inventoried owner (Pair, still a class) untouched");
+        check(r.interfaceRepairsApplied == 3, "repair counter = 3 (static, virtual, object-member)");
+        ClassWriter cw = new ClassWriter(0);
+        cn.accept(cw);
+        check(cw.toByteArray().length > 0, "repaired class serializes without error");
+
+        // empty inventory = pass disabled (agent bundles without the inventory)
+        Rewriter bare = new Rewriter();
+        ClassNode cn2 = driftHost();
+        bare.repairInterfaceCallSites(cn2);
+        check(bare.interfaceRepairsApplied == 0, "empty inventory: pass is a no-op");
+    }
+
+    /** the CLI rule loader tolerates a rules dir without interfaces-1211.txt */
+    void interfaceInventoryMissingFileTolerated() throws IOException {
+        Path tmp = Files.createTempDirectory("mb-rules");
+        try {
+            Rewriter r = new Rewriter();
+            r.loadRules(tmp);
+            check(r.interfaces1211.isEmpty(), "missing interfaces-1211.txt parses as empty");
+            ClassNode cn = driftHost();
+            r.repairInterfaceCallSites(cn);
+            check(r.interfaceRepairsApplied == 0,
+                    "missing inventory: drifted sites left untouched (pass disabled)");
+        } finally {
+            try (var walk = Files.walk(tmp)) {
+                walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
     }
 
     void methodDrops() throws IOException {

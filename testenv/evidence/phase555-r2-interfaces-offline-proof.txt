@@ -1,0 +1,37 @@
+# round-2 (DFU interface ICCE) offline proof — 2026-10-05
+
+## 1. JVM call-shape matrix, proven on the sandbox JDK (ASM-generated caller, /tmp harness reproduced below)
+
+# Matrix.java (harness): interface DR { DR s(); static DR make(); default DR m(); }
+# class Impl implements DR — 8 generated callers, one call shape each:
+#  [ERR] static Methodref on iface static  (1.20.1 shape) -> IncompatibleClassChangeError: Method 'Matrix$DR Matrix$DR.make()' must be InterfaceMethodref constant
+#  [OK ] static  itf=true on iface static   (repair A)
+#  [ERR] virtual Methodref default   (1.20.1 class-instance shape) -> IncompatibleClassChangeError: Found interface Matrix$DR, but class was expected
+#  [OK ] invokeinterface itf=true    (repair B)
+#  [ERR] virtual Methodref equals    (Object member via iface owner) -> IncompatibleClassChangeError: Found interface Matrix$DR, but class was expected
+#  [OK ] virtual  Object.equals      (repair C)
+#  [ERR] virtual Methodref toString  (Object member via iface owner) -> IncompatibleClassChangeError: Found interface Matrix$DR, but class was expected
+#  [OK ] virtual  Object.toString    (repair C)
+
+## 2. drifted-site census (raw jars, owners remapped through the shipped type rules, intersected with rules/interfaces-1211.txt)
+   moonlight: 47 sites (15 success + 14 error statics; 18 virtuals) — pass counter = 47
+   supplementaries: 36 sites (2 success + 2 error statics; 16 result + 15 getOrThrow + 1 map virtuals) — pass counter = 36
+
+## 3. proof script output
+----
+== (i) zero malformed Methodref-on-interface call sites in the translated jars ==
+  [PASS] zero Methodref-on-interface sites in moonlight-121.jar (scan over 512 classes)
+  [PASS] zero Methodref-on-interface sites in supplementaries-121.jar (scan over 1113 classes)
+== (ii) the live-boot wall constant, specifically ==
+  [PASS] TomlConfigOps: DataResult.success(Object) is an InterfaceMethodref constant
+  [PASS] TomlConfigOps: zero remaining Methodref constants on DataResult (count=0)
+  [PASS] TomlConfigOps: virtual DataResult calls converted to invokeinterface
+== (iii) member-drift census (kind-repaired but members absent from DFU 8.0.16 — next wall) ==
+  [PASS] census: getOrThrow(Z,Consumer) sites are kind-repaired but need a semantic shim (20 sites: 15 supp + 5 moon)
+  [PASS] DFU 8.0.16 ground truth: DataResult has getOrThrow(Function)
+  [PASS] DFU 8.0.16 ground truth: DataResult has NO getOrThrow(Z, Consumer)
+== (iv) round-1 config proof still holds ==
+  [PASS] round-1 eager-config proof: 14 checks, all green
+eager-config offline proof: 14 passed, 0 failed
+
+interface-repair round-2 proof: 9 passed, 0 failed
