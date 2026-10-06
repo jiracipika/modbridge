@@ -821,3 +821,94 @@ fixture sanity (`ctor retargets=0`, `method drops=0`), agent builds.
   classes, networking/SimpleChannel package drift, FinishedRecipe datagen,
   AbstractCriterionTriggerInstance, eager-config already covered by the config
   lane's bridge).
+
+# Round 2: the DFU interface-static ICCE wall falls (2026-10-05, post-merge slice)
+
+Live boot after the lane merge: both round-1 walls PASSED (configs read at
+construction; loot codecs registered). New wall, inside the eager config load:
+`java.lang.IncompatibleClassChangeError: Method 'DataResult.success(Object)' must be
+InterfaceMethodref constant` at moonlight databuddy `ConfigHelper$TomlConfigOps`.
+1.20.1 shipped DFU 6 (DataResult = CLASS → javac emits Methodref for its statics);
+21.1 ships DFU 8.0.16 (DataResult = INTERFACE → the JVM demands InterfaceMethodref).
+The same drift shape fires for ANY 1.20.1 bytecode calling a class that became an
+interface.
+
+## Ground truth
+
+- javap DFU 8.0.16: `DataResult` is an interface; the full static surface moonlight
+  uses exists verbatim (`success(R)`, `error(Supplier)`, `error(Supplier,R)`, plus
+  Lifecycle overloads, `unbox`, `partialGet`, `instance`); `Pair` stayed a CLASS;
+  `DataResult$Error` stayed a class.
+- JVM truth matrix, PROVEN on the sandbox's JDK 21 with an ASM-generated caller
+  (Methodref vs InterfaceMethodref × opcode): invokestatic+Methodref on an interface
+  static → ICCE "must be InterfaceMethodref" (the live wall); invokevirtual+Methodref
+  on an interface member → ICCE "Found interface, but class was expected";
+  invokevirtual+Methodref for an Object member named through the interface owner →
+  ICCE as well. All three repaired shapes work: static itf=true;
+  INVOKEINTERFACE+itf=true; INVOKEVIRTUAL with owner java/lang/Object (exactly what
+  javac emits for interface-typed receivers).
+- Drift census across BOTH raw jars (every `// Method` invokestatic/invokevirtual
+  whose owner is a 21.1 interface): exactly ONE drifted type —
+  `com/mojang/serialization/DataResult`: moonlight 47 sites (29 invokestatic: 15
+  success + 14 error; 18 invokevirtual), supplementaries 36 sites (4 invokestatic:
+  2 success + 2 error; 32 invokevirtual: 16 result + 15 getOrThrow + 1 map).
+  Both counts equal the pass counters exactly (47 / 36).
+  Sites already interface-shaped on 1.20.1 (DynamicOps, IEventBus, ...) carry
+  itf=true and are left untouched — the `!m.itf` guard makes the repair fire only on
+  genuinely drifted constants.
+
+## What was built
+
+1. **`scripts/gen-interfaces-1211.sh`** (new): scans EVERY jar under the sandbox
+   libraries tree with an embedded single-file Java class-file parser (constant-pool
+   walk → access_flags, ACC_INTERFACE mask, annotations included) and emits
+   **`rules/interfaces-1211.txt`** — 5,496 internal interface names (minecraft srg +
+   neoforge + fml + bus + mojang DFU/brigadier/authlib/logging + night-config +
+   netty/guava/gson/fastutil/...). Same regen conventions as gen-classlist-1211.sh.
+2. **Interface call-site repair pass** (rewriter, runs LAST in transform — after
+   remapClass, so call-site owners are final-space and match the inventory):
+   - INVOKESTATIC on an inventoried interface → keep opcode, `itf = true`
+     (InterfaceMethodref);
+   - INVOKEVIRTUAL on an inventoried interface → INVOKEINTERFACE + itf=true, EXCEPT
+     the java/lang/Object members (equals/hashCode/toString/...), which keep
+     INVOKEVIRTUAL and move to the Object owner;
+   - sites already itf=true are skipped; getstatic/putstatic need no repair (field
+     refs have no itf bit); INVOKESPECIAL-on-interface has no 1.20.1-class-shaped
+     producer here. Never guesses: only inventoried owners are touched. Counter in
+     the translation summary: `interface repairs=N`.
+   - Wired into BOTH rule loaders (CLI readLines — missing file = empty = pass
+     disabled; agent resourceLinesOptional) + printRuleStats.
+
+## Gates
+
+- unit: ctor-retarget 3/3 (52 checks: +8 interface-repair checks — inventoried
+  static repaired, already-itf untouched, virtual→invokeinterface, Object-member
+  owner move, non-inventoried Pair untouched, counter, serialize, empty-inventory
+  no-op, missing-file tolerance), shims 3/3, refmap 3/3, srg-resolver 4/4.
+- translation: moonlight `interface repairs=47` (= exactly its 47 drifted census
+  sites), supplementaries `interface repairs=36` (12 DataResult + 24 sites whose
+  owners remap into 21.1 interfaces — see census note below).
+- offline proof 14/14 incl. round-1 regression: zero malformed Methodref-on-interface
+  sites left in either output jar; TomlConfigOps carries InterfaceMethodref for
+  DataResult.success(Object) specifically (testenv/evidence/
+  phase555-r2-interfaces-offline-proof.txt).
+
+## Honest caveats / next walls
+
+- MEMBER drift is a different family and is NOT fixed by a kind repair:
+  `DataResult.getOrThrow(Z, Consumer)` (20 call sites: 5 moonlight — TomlConfigOps
+  lambda createMap$11 + ConfigHelper — and 15 supplementaries) and
+  `DataResult.get()Either` (2 moonlight sites) do not exist on DFU 8 (which offers
+  `getOrThrow()`, `getOrThrow(Function)`, `result()`). They are now kind-repaired
+  (invokeinterface) and fail with NoSuchMethodError instead of ICCE IF executed —
+  a semantic adapter shim is the fix (map (Z,Consumer) →
+  resultOrPartial/getOrThrow(Function) semantics), scoped for the next slice.
+  14 supplementaries + 6 moonlight classes carry getOrThrow refs; every other
+  drifted member (success/error/map/flatMap/result/error()/resultOrPartial) exists
+  on DFU 8 with a matching erased descriptor and is fully fixed by this slice.
+- A mod shading its own copy of a drifted type under the same internal name would
+  be wrongly repaired (its copy is a class in its own module) — none of the measured
+  mods shade DFU; noted for the record.
+- Cosmetic: Object-member dispatch through the Object owner reaches the implementing
+  object's override even where DFU 6's class had its own override — same method
+  resolution javac-on-interface produces; no crash path.

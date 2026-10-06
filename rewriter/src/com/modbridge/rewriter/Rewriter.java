@@ -115,6 +115,14 @@ public class Rewriter {
     /** 1.21.1 platform member inventory (owner -> name -> descriptors) backing the
      *  accessor/invoker and @Shadow drift checks. Optional — empty disables them. */
     final Map<String, Map<String, Set<String>>> memberTargets = new HashMap<>();
+    /** internal names of every ACC_INTERFACE class on the 21.1 platform (rules/
+     *  interfaces-1211.txt, all shipped libraries). Drives the interface call-site
+     *  repair: 1.20.1 bytecode that called these types as CLASSES carries Methodref
+     *  constants which the JVM rejects with IncompatibleClassChangeError once the
+     *  type is an interface (measured wall: DFU 6 DataResult class statics vs DFU 8
+     *  interface statics — trial 002 eager-config slice round 2). Optional — empty
+     *  disables the pass. */
+    final Set<String> interfaces1211 = new HashSet<>();
     /** call-site retargets for members that became interface-default methods:
      *  owner|desc|name -> newOwner|newDesc|interface-or-virtual */
     final Map<String, String[]> memberRetargets = new HashMap<>();
@@ -127,6 +135,9 @@ public class Rewriter {
      *  elsewhere on 21.1 (or are documented no-ops): owner|desc|name -> typed return */
     final Set<String> methodDrops = new HashSet<>();
     int methodDropsApplied;
+    /** interface call-site repairs (Methodref -> InterfaceMethodref kind fixes +
+     *  invokevirtual-on-interface -> invokeinterface). See interfaces1211. */
+    int interfaceRepairsApplied;
     /** 1.21.1 platform class universe (internal names): minecraft server + neoforge
      *  libraries. Optional — when absent, only leftover forge refs count as drift. */
     final Set<String> classlist = new HashSet<>();
@@ -188,6 +199,7 @@ public class Rewriter {
         addCtorRetargetRules(readLines(rulesDir.resolve("ctorretargets.txt")));
         addMethodDrops(readLines(rulesDir.resolve("methoddrops.txt")));
         addClasslist(readLines(rulesDir.resolve("classlist-1211.txt")));
+        addInterfaceInventory(readLines(rulesDir.resolve("interfaces-1211.txt")));
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
         loadShimsFromDir(rulesDir.resolve("shims"));
@@ -205,6 +217,7 @@ public class Rewriter {
         addCtorRetargetRules(resourceLines("/rules/ctorretargets.txt"));
         addMethodDrops(resourceLinesOptional("/rules/methoddrops.txt"));
         addClasslist(resourceLinesOptional("/rules/classlist-1211.txt"));
+        addInterfaceInventory(resourceLinesOptional("/rules/interfaces-1211.txt"));
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
         loadShimsFromClasspath("/rules/shims");
@@ -218,11 +231,11 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d classlist, %d mojrenames, %d member-targets classes, %d shims%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
-                ctorRetargets.size(), methodDrops.size(), classlist.size(), mojMemberRenames.size(),
-                memberTargets.size(), shims.size());
+                ctorRetargets.size(), methodDrops.size(), classlist.size(), interfaces1211.size(),
+                mojMemberRenames.size(), memberTargets.size(), shims.size());
     }
 
     /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
@@ -407,6 +420,15 @@ public class Rewriter {
         for (String line : lines) {
             String t = line.trim();
             if (!t.isEmpty() && !t.startsWith("#")) classlist.add(t);
+        }
+    }
+
+    /** internal names of the 21.1 platform's ACC_INTERFACE classes
+     *  (rules/interfaces-1211.txt, scripts/gen-interfaces-1211.sh) */
+    void addInterfaceInventory(List<String> lines) {
+        for (String line : lines) {
+            String t = line.trim();
+            if (!t.isEmpty() && !t.startsWith("#")) interfaces1211.add(t);
         }
     }
 
@@ -628,9 +650,9 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, member renames=%d%n",
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, member renames=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
-                methodDropsApplied, memberRenamesApplied);
+                methodDropsApplied, interfaceRepairsApplied, memberRenamesApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         for (String line : neutralizationLog) {
@@ -689,6 +711,9 @@ public class Rewriter {
         }
         applyMemberRenames(cn);
         remapClass(cn);
+        // must run AFTER remapClass: call-site owners are final-space here, matching
+        // the interfaces-1211.txt inventory
+        repairInterfaceCallSites(cn);
     }
 
     private static boolean isModClass(ClassNode cn) {
@@ -1494,6 +1519,63 @@ public class Rewriter {
             System.out.println("method body dropped: " + cn.name + "." + mn.name + mn.desc);
         }
     }
+
+    /**
+     * Interface call-site repair (rules/interfaces-1211.txt): 1.20.1 bytecode that
+     * called a type as a CLASS carries Methodref constants; when that type is an
+     * ACC_INTERFACE on 21.1 the JVM rejects every such site at execution:
+     * invokestatic -> "must be InterfaceMethodref constant" (the DFU 8 DataResult
+     * wall — moonlight databuddy TomlConfigOps during the eager config load),
+     * invokevirtual -> "Found interface, but class was expected". The 1.20.1-legal
+     * shapes and their proven repairs (JDK 21 matrix experiment, trial 002 round 2):
+     *
+     *   INVOKESTATIC   Methodref on an interface static -> keep opcode, itf = true
+     *   INVOKEVIRTUAL  Methodref on an interface member -> INVOKEINTERFACE, itf = true
+     *   INVOKEVIRTUAL  Methodref for a java/lang/Object member named through the
+     *                  interface owner (javac-on-a-class emits the receiver type as
+     *                  owner) -> keep opcode, owner becomes java/lang/Object — exactly
+     *                  what javac emits for an interface-typed receiver; virtual
+     *                  dispatch reaches the object's own override (or the interface
+     *                  default never being involved).
+     *
+     * Sites already carrying itf = true (types that were interfaces on 1.20.1 too —
+     * DynamicOps, IEventBus, ...) are left untouched, so the repair only fires on the
+     * actually-drifted constants. Field refs (getstatic/putstatic) carry no itf bit
+     * and need no repair. Runs AFTER remapClass, so owners are final-space and match
+     * the inventory; a member that genuinely drifted away is a NoSuchMethodError
+     * either way (semantic shim territory, not a kind repair).
+     */
+    void repairInterfaceCallSites(ClassNode cn) {
+        if (interfaces1211.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            for (AbstractInsnNode n : mn.instructions) {
+                if (!(n instanceof MethodInsnNode m) || m.itf) continue;
+                if (!interfaces1211.contains(m.owner)) continue;
+                int op = m.getOpcode();
+                if (op == Opcodes.INVOKESTATIC) {
+                    m.itf = true;
+                    interfaceRepairsApplied++;
+                } else if (op == Opcodes.INVOKEVIRTUAL) {
+                    if (OBJECT_MEMBER_NAMES.contains(m.name)) {
+                        m.owner = "java/lang/Object";
+                    } else {
+                        m.setOpcode(Opcodes.INVOKEINTERFACE);
+                        m.itf = true;
+                    }
+                    interfaceRepairsApplied++;
+                }
+                // INVOKESPECIAL on an interface (private interface methods, super-
+                // defaults) has no 1.20.1-class-shaped producer in mods calling into
+                // platform code; INVOKEINTERFACE needs no repair. Never guessed.
+            }
+        }
+    }
+
+    /** names of the java/lang/Object members javac may name through a receiver's
+     *  static type; these keep INVOKEVIRTUAL and move to the Object owner */
+    private static final Set<String> OBJECT_MEMBER_NAMES = Set.of(
+            "equals", "hashCode", "toString", "getClass", "clone", "finalize",
+            "notify", "notifyAll", "wait");
 
     void applyMemberRenames(ClassNode cn) {
         // SRG declarations: production 1.20.1 mods override vanilla members by SRG id

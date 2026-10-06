@@ -4,7 +4,10 @@
 # ctor-arg region (branch among the args) and @SHIM@ rule owners resolving to the
 # per-mod shim package — the ModConfig -> ModConfigBridge.registerAndLoad retarget
 # (registration + eager COMMON load) that unblocks moonlight's ConfigSpecWrapper
-# (trial 002 phase 5.5 + the eager-config slice).
+# (trial 002 phase 5.5 + the eager-config slice) — plus the interface call-site
+# repair pass (rules/interfaces-1211.txt): Methodref-on-interface constants left by
+# 1.20.1 bytecode (the DFU 8 DataResult ICCE wall) repaired to InterfaceMethodref /
+# invokeinterface / Object-owner shapes.
 set -uo pipefail
 MB="$(cd "$(dirname "$0")/.." && pwd)"
 JDK=/Volumes/HARD/dev-cache/jdks/jdk-21.0.12+8/Contents/Home

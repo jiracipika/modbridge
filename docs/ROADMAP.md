@@ -65,7 +65,7 @@ drift neutralization against a generated 1.21.1 platform classlist/member invent
 injector strictness downgrade, nested-jar dropping, frame-safe @Mod ctor rewrite.
 Zero injection errors on supplementaries+moonlight (see docs/REAL-MOD-TRIAL-002.md).
 
-## Phase 5 — wider vanilla deltas — IN PROGRESS (capability facade + config chain DONE)
+## Phase 5 — wider vanilla deltas — IN PROGRESS (config chain + DFU interface ICCE DONE)
 Cross-version vanilla API renames/reshapes. DONE (2026-10-05): capability facade
 (ToolAction→ItemAbility retarget, 15-shim carrier), the ModConfig 4-arg ctor wall
 (ctor-retarget to ConfigTracker.registerConfig — exact semantic parity, javap-proven),
@@ -76,6 +76,11 @@ REMAINING walls, in fight order (both scoped in docs/REAL-MOD-TRIAL-002.md phase
   semantic per-implementer bridge (moonlight MoonlightRegistry/ModLootConditions)
 - eager config reads — DONE (eager-config slice 2026-10-05): ModConfigBridge shim
   eager-loads COMMON configs at registration; see docs/REAL-MOD-TRIAL-002.md
+- DFU 6→8 class→interface drift (DataResult ICCE) — DONE (round 2, 2026-10-05):
+  generated 21.1 interface inventory (rules/interfaces-1211.txt, 5,496) + a rewriter
+  call-site kind repair (InterfaceMethodref / invokeinterface / Object-owner); the
+  member-drift leftovers (DataResult.getOrThrow(Z,Consumer) ×15, get() ×2) need a
+  semantic adapter shim — next slice
 - networking (SimpleChannel→PayloadRegistrar), FinishedRecipe/loot-serializer datagen
 - client-side SRG coverage (1.20.1 client inventory; inert on dedicated servers)
 
