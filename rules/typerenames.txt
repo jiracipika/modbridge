@@ -256,3 +256,11 @@ net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent	@SHIM@/Living
 # FIRING documented dead - no 21.1 pickup event to dispatch. Single referrer:
 # supp ServerEventsForge.onItemPickup.
 net/minecraftforge/event/entity/player/EntityItemPickupEvent	@SHIM@/EntityItemPickupEvent
+
+# --- event lane, iteration 3 (phase 5.10): the old forge TickEvent family is gone;
+# PlayerTickEvent moved to net.neoforged.neoforge.event.tick as ABSTRACT Pre/Post
+# subclasses. supp ServerEventsForge.onPlayerTick declares ONLY the param type (no
+# member calls) -> plain typerename to PlayerTickEvent\$Post: the bus FIRES it
+# post-phase per player tick (1.20.1's handler ran both phases unchecked - Post-only
+# is the closest live bridge; phase semantics NOT claimed).
+net/minecraftforge/event/TickEvent$PlayerTickEvent	net/neoforged/neoforge/event/tick/PlayerTickEvent$Post
