@@ -9,4 +9,4 @@ net/minecraft/commands/CommandSourceStack|sendSuccess|(Ljava/util/function/Suppl
 # the 21.1 final record) - widen the material param to Object. The superswap
 # retargets the OWNER to ArmorItemCompat (whose ctor takes Object); this desc rule
 # makes the ARG verify. Original-space key (applyMemberRenames runs pre-remapClass).
-net/minecraft/world/item/ArmorItem|<init>|(Lnet/minecraft/world/item/ArmorMaterial;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V = (Ljava/lang/Object;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V
+net/minecraft/world/item/ArmorItem|<init>|(Lnet/minecraft/world/item/ArmorMaterial;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V=(Ljava/lang/Object;Lnet/minecraft/world/item/ArmorItem$Type;Lnet/minecraft/world/item/Item$Properties;)V
