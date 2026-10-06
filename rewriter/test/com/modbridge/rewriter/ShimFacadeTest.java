@@ -632,6 +632,19 @@ public final class ShimFacadeTest {
                         && iisSigs.contains("parse(Lcom/google/gson/JsonObject;)Lnet/minecraft/world/item/crafting/Ingredient;")
                         && iisSigs.contains("write(Lnet/minecraft/network/FriendlyByteBuf;Lnet/minecraft/world/item/crafting/Ingredient;)V"),
                 "IIngredientSerializer: parse/parse/write erased shapes (byte-level)");
+
+        // GravelBlock checked structurally: reflecting its ctor would resolve
+        // BlockBehaviour$Properties -> the guava cascade (same lesson as NetworkEvent$Context)
+        Class<?> gb = com.modbridge.shim.GravelBlock.class;
+        check(gb.getSuperclass() == net.minecraft.world.level.block.FallingBlock.class,
+                "GravelBlock shim: extends the real 21.1 FallingBlock");
+        ClassNode gbNode = new ClassNode();
+        new ClassReader(java.nio.file.Files.readAllBytes(
+                Path.of("rules/shims/com/modbridge/shim/GravelBlock.class")))
+                .accept(gbNode, 0);
+        boolean ctorShape = gbNode.methods.stream().anyMatch(
+                m -> m.name.equals("<init>") && m.desc.equals("(Lnet/minecraft/world/level/block/state/BlockBehaviour$Properties;)V"));
+        check(ctorShape, "GravelBlock: measured (BlockBehaviour$Properties) super-ctor surface (byte-level)");
     }
 
     // ------------------------------------------------------- rules-level + injection
@@ -639,7 +652,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 42, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient, RecordItem, IIngredientSerializer)");
+        check(r.shims.size() == 43, "rules/shims: manifest loads 40 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades, Vanishable, AbstractIngredient, RecordItem, IIngredientSerializer, GravelBlock)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -744,13 +757,16 @@ public final class ShimFacadeTest {
         check(r.remapType("net/minecraftforge/common/crafting/IIngredientSerializer")
                         .equals("com/modbridge/shim/testmod/IIngredientSerializer"),
                 "rules: IIngredientSerializer -> interface shim");
+        check(r.remapType("net/minecraft/world/level/block/GravelBlock")
+                        .equals("com/modbridge/shim/testmod/GravelBlock"),
+                "rules: GravelBlock -> FallingBlock-extending shim");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 42, "injectShims(): all 42 shims present under the per-mod package");
+        check(entries.size() == 43, "injectShims(): all 43 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

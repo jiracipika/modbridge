@@ -473,13 +473,16 @@ public final class CtorRetargetTest {
     void realMethodDropsLoad() throws IOException {
         Rewriter r = new Rewriter();
         r.addMethodDrops(Files.readAllLines(Path.of("rules/methoddrops.txt")));
-        check(r.methodDrops.size() == 2, "rules/methoddrops.txt parses (2 rules)");
+        check(r.methodDrops.size() == 3, "rules/methoddrops.txt parses (3 rules)");
         check(r.methodDrops.contains(
                 "net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|register"),
                 "register() drop present");
         check(r.methodDrops.contains(
                 "net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|loadFromFile"),
                 "loadFromFile() drop present");
+        check(r.methodDrops.contains(
+                "net/mehvahdjukaar/moonlight/api/resources/recipe/BlockTypeSwapIngredient|()V|init"),
+                "block_type_swap init() drop present (dead-path switch)");
     }
 
     // ------------------------------------------- interface call-site repair pass

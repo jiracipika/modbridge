@@ -209,3 +209,10 @@ net/minecraftforge/common/crafting/AbstractIngredient	@SHIM@/AbstractIngredient
 # interface shim; registration + JSON recipes NOT claimed.
 net/minecraft/world/item/RecordItem	@SHIM@/RecordItem
 net/minecraftforge/common/crafting/IIngredientSerializer	@SHIM@/IIngredientSerializer
+
+# --- removed-API ladder, iteration 3 (phase 5.10): GravelBlock (gone on 21.1 -
+# falling-block restructure; single subclass supp RakedGravelBlock with the
+# (BlockBehaviour$Properties) super-ctor + asState super-call) -> shim extends the
+# REAL 21.1 FallingBlock (same ctor shape survives); implements the 21.1-added
+# abstract codec() inertly. Block serialization of raked gravel NOT claimed.
+net/minecraft/world/level/block/GravelBlock	@SHIM@/GravelBlock

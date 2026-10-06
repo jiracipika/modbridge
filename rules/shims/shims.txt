@@ -1,6 +1,7 @@
 com/modbridge/shim/AbstractIngredient
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
+com/modbridge/shim/GravelBlock
 com/modbridge/shim/IIngredientSerializer
 com/modbridge/shim/MessageHandler
 com/modbridge/shim/NetworkDirection

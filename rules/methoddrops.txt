@@ -18,3 +18,10 @@ net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|reg
 # (ConfigTracker.loadConfigs builds the toml from spec defaults), which the ctor
 # registration above enrolled both configs into.
 net/mehvahdjukaar/moonlight/api/platform/configs/forge/ConfigSpecWrapper|()V|loadFromFile
+# phase 5.10: BlockTypeSwapIngredient.init() is the block_type_swap dead-path
+# registration switch (documented dead since phase 5.6 - no boot, no JSON recipe
+# support). Dropping it keeps the impl class UNLOADED: the impl's create() fails
+# VERIFICATION at load (it returns the AbstractIngredient-shim subclass AS a 21.1
+# Ingredient - Ingredient is FINAL on 21.1 so no shim can restore the IS-A chain),
+# and an unloaded class never verifies. Void return = stack-shape safe.
+net/mehvahdjukaar/moonlight/api/resources/recipe/BlockTypeSwapIngredient|()V|init
