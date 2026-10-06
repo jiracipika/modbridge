@@ -1,0 +1,25 @@
+# phase 5.7 — round-1 subagent lanes merged + integration boot (2026-10-05, ~21:45)
+# merge 1b55d3d = slice/loot-codec (1c8fd55: 8 loot shims, Serializer->@SHIM@ world)
+#               + slice/eager-config (7c2c2f6: ModConfigBridge eager loadConfigs bridge,
+#                 ctorretargets target @SHIM@/ModConfigBridge.registerAndLoad)
+# merged tree: 24 shims, 32 type rules, all 4 unit scripts green, fixture inert
+#               (ctor retargets=0, method drops=0).
+#
+# INTEGRATION BOOT (supp-3.1.38 + moonlight-2.16.10 drop-in, clean cache):
+# BOTH round-1 walls PASSED — the loot Serializer NCDFE is gone and config values
+# read at construction with no IllegalStateException (supp died BEYOND its configs
+# clinit this time). Two NEW walls, exactly the "expected next wall" entries from
+# both lanes' round-1 reports:
+#
+# 1. DFU interface-static drift (config lane round 2):
+# java.lang.IncompatibleClassChangeError: Method 'com.mojang.serialization.DataResult
+#   com.mojang.serialization.DataResult.success(java.lang.Object)' must be
+#   InterfaceMethodref constant
+#   at moonlight.core.databuddy.ConfigHelper$TomlConfigOps.getStringValue(:255)
+#   (fires inside the eager config load; DFU 6 class -> DFU 8.0.16 interface)
+#
+# 2. crafting-condition serializer family (loot lane round 2):
+# java.lang.NoClassDefFoundError:
+#   net/neoforged/neoforge/common/crafting/conditions/IConditionSerializer
+#   at moonlight.api.platform.RegHelper.register <- MoonlightRegistry.<clinit>:33
+#   <- moonlight commonInit:75
