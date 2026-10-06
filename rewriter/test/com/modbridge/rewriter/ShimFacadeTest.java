@@ -57,6 +57,8 @@ public final class ShimFacadeTest {
         lootShimExactness();
         conditionShimExactness();
         criteriaShimExactness();
+        dataResultShimExactness();
+        rulesAndInjection();
         rulesAndInjection();
     }
 
@@ -418,6 +420,68 @@ public final class ShimFacadeTest {
         check(ti instanceof net.minecraft.advancements.critereon.SimpleCriterionTrigger.SimpleInstance,
                 "translated-style subclass: IS-A SimpleInstance");
         check(ti.player().isEmpty(), "player(): null predicate -> Optional.empty (null-safe)");
+    // --------------------------------------------------- DFU-drift adapter (phase 5.9)
+
+    /**
+     * DataResultCompat: static adapter the new memberretargets "static" kind routes
+     * the DFU 6->8 member drift to (getOrThrow(Z,Consumer) x20, get() x2 measured).
+     * Semantics ported from the DFU 6.0.8 bytecode (lambda$getOrThrow$5):
+     * addMessage = "return the partial result instead of throwing when one exists",
+     * and onError.accept(message) fires on BOTH flag values before any throw.
+     */
+    void dataResultShimExactness() throws Exception {
+        Class<?> shim = com.modbridge.shim.DataResultCompat.class;
+        check(java.lang.reflect.Modifier.isFinal(shim.getModifiers()) && !shim.isInterface(),
+                "DataResultCompat: final utility class");
+        check(desc(shim, "getOrThrow")
+                        .equals("(Lcom/mojang/serialization/DataResult;ZLjava/util/function/Consumer;)Ljava/lang/Object;"),
+                "getOrThrow adapter desc = the receiver-prepended rule shape exactly");
+        check(desc(shim, "get")
+                        .equals("(Lcom/mojang/serialization/DataResult;)Lcom/mojang/datafixers/util/Either;"),
+                "get adapter desc = receiver-prepended, erased Either return");
+        try {
+            check(java.lang.reflect.Modifier.isPrivate(shim.getDeclaredConstructor().getModifiers()),
+                    "DataResultCompat: sole ctor private (utility)");
+        } catch (NoSuchMethodException e) {
+            check(true, "DataResultCompat: no ctor at all (utility)");
+        }
+
+        java.util.List<String> msgs = new java.util.ArrayList<>();
+        com.mojang.serialization.DataResult<String> ok = com.mojang.serialization.DataResult.success("v");
+        check(com.modbridge.shim.DataResultCompat.getOrThrow(ok, true, msgs::add).equals("v"),
+                "success path returns the value unchanged");
+        check(msgs.isEmpty(), "success path never calls onError");
+
+        com.mojang.serialization.DataResult<String> err = com.mojang.serialization.DataResult.error(() -> "boom");
+        try {
+            com.modbridge.shim.DataResultCompat.getOrThrow(err, false, msgs::add);
+            check(false, "error + no partial throws");
+        } catch (RuntimeException e) {
+            check("boom".equals(e.getMessage()), "throw = RuntimeException(message)");
+        }
+        check(msgs.size() == 1 && "boom".equals(msgs.get(0)),
+                "onError accepted the message exactly once before the throw");
+
+        msgs.clear();
+        com.mojang.serialization.DataResult<String> partial =
+                com.mojang.serialization.DataResult.error(() -> "soft", "partial-v");
+        check(com.modbridge.shim.DataResultCompat.getOrThrow(partial, true, msgs::add).equals("partial-v"),
+                "addMessage=true + partial present -> returns the partial (DFU 6 bytecode contract)");
+        check("soft".equals(msgs.get(0)), "message still delivered alongside the partial");
+        try {
+            com.modbridge.shim.DataResultCompat.getOrThrow(partial, false, msgs::add);
+            check(false, "addMessage=false throws even with a partial present");
+        } catch (RuntimeException e) {
+            check("soft".equals(e.getMessage()), "addMessage=false keeps the throw");
+        }
+
+        com.mojang.datafixers.util.Either<String, ?> left = com.modbridge.shim.DataResultCompat.get(ok);
+        check("v".equals(left.left().orElse(null)), "get(): success -> Either.left(value)");
+        com.mojang.datafixers.util.Either<String, ?> right = com.modbridge.shim.DataResultCompat.get(err);
+        check(right.right().orElse(null) instanceof com.mojang.serialization.DataResult.Error,
+                "get(): error -> Either.right(21.1 Error record)");
+        check("boom".equals(((com.mojang.serialization.DataResult.Error<?>) right.right().orElseThrow()).message()),
+                "Error.message() reachable (the PartialResult.message retarget's dispatch target)");
     }
 
     // ------------------------------------------------------- rules-level + injection
@@ -425,7 +489,7 @@ public final class ShimFacadeTest {
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 27, "rules/shims: manifest loads 27 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane class)");
+        check(r.shims.size() == 28, "rules/shims: manifest loads 28 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane class, DataResultCompat)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -483,13 +547,21 @@ public final class ShimFacadeTest {
                 "rules: criteria super-ctor desc remaps whole");
         check(r.memberRenames.containsKey("net/minecraftforge/event/level/BlockEvent$BlockToolModificationEvent|()Lnet/minecraftforge/common/ToolAction;|getToolAction"),
                 "rules: getToolAction=getItemAbility memberrename present");
+        // DFU drift lane: the static-kind rules landed in memberretargets.txt
+        check(r.memberRetargets.get(
+                        "com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow")[2]
+                        .equals("static"),
+                "rules: DataResult.getOrThrow(Z,Consumer) carries the static kind");
+        check(r.memberRetargets.containsKey(
+                        "com/mojang/serialization/DataResult$PartialResult|()Ljava/lang/String;|message"),
+                "rules: PartialResult.message -> Error.message owner-retarget present");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 27, "injectShims(): all 27 shims present under the per-mod package");
+        check(entries.size() == 28, "injectShims(): all 28 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

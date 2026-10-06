@@ -4,3 +4,21 @@
 net/minecraftforge/event/entity/living/LivingAttackEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface
 net/minecraftforge/event/entity/living/LivingHurtEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface
 net/minecraftforge/event/entity/living/LivingDamageEvent|(Z)V|setCanceled -> net/neoforged/bus/api/ICancellableEvent|(Z)V|interface
+
+# --- DFU 6 -> 8 member drift (config lane, phase 5.9). DataResult went class ->
+# interface on 21.1 (the interface call-site repair fixes the SURVIVING members);
+# these three shapes have no 21.1 counterpart at all (measured: supp+ml ASM scan
+# vs javap datafixerupper-8.0.16):
+#   DataResult.getOrThrow(Z,Consumer)  x20  (supp 15, ml 5)
+#   DataResult.get()Lcom/mojang/datafixers/util/Either;  x2  (ml)
+#   DataResult$PartialResult.message() x1   (ml - the class is GONE, the Error
+#                                            record replaced it, same accessor)
+# New kind "static": INVOKEVIRTUAL -> INVOKESTATIC on the per-mod shim
+# DataResultCompat, whose first parameter IS the receiver (semantics ported from
+# the DFU 6.0.8 bytecode: addMessage = "return the partial result instead of
+# throwing"). Stack shape identical: receiver consumed as argument 1, frames
+# untouched. Runs BEFORE the interface repair, so the retargeted sites (owner =
+# shim) are never re-touched by it, while surviving DataResult virtuals still are.
+com/mojang/serialization/DataResult|(ZLjava/util/function/Consumer;)Ljava/lang/Object;|getOrThrow -> @SHIM@/DataResultCompat|(Lcom/mojang/serialization/DataResult;ZLjava/util/function/Consumer;)Ljava/lang/Object;|static
+com/mojang/serialization/DataResult|()Lcom/mojang/datafixers/util/Either;|get -> @SHIM@/DataResultCompat|(Lcom/mojang/serialization/DataResult;)Lcom/mojang/datafixers/util/Either;|static
+com/mojang/serialization/DataResult$PartialResult|()Ljava/lang/String;|message -> com/mojang/serialization/DataResult$Error|()Ljava/lang/String;|virtual
