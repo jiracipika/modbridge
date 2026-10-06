@@ -65,3 +65,11 @@ net/minecraftforge/registries/ForgeRegistries|Lnet/minecraftforge/registries/IFo
 # STATIC on 21.1 -> "static"-kind void wrapper shim (stack shape kept).
 net/minecraftforge/registries/IForgeRegistry|()Lnet/minecraft/resources/ResourceKey;|key -> net/minecraft/core/Registry|()Lnet/minecraft/resources/ResourceKey;|interface
 net/minecraftforge/registries/IForgeRegistry|(Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|register -> @SHIM@/RegistryCompat|(Lnet/minecraft/core/Registry;Lnet/minecraft/resources/ResourceLocation;Ljava/lang/Object;)V|static
+
+# --- codecs lane (phase 5.10, live-boot wall: ExtraCodecs.COMPONENT NoSuchFieldError
+# at moonlight SoftFluid clinit): 1.20.5+ moved the Component codecs from
+# ExtraCodecs to ComponentSerialization. Measured: COMPONENT (f_252442_, ml
+# SoftFluid clinit) + FLAT_COMPONENT (f_276686_, supp TextHolder). Field retargets
+# with name changes (original-space keys; mapSrg resolves the ids first).
+net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|COMPONENT -> net/minecraft/network/chat/ComponentSerialization|Lcom/mojang/serialization/Codec;|CODEC
+net/minecraft/util/ExtraCodecs|Lcom/mojang/serialization/Codec;|FLAT_COMPONENT -> net/minecraft/network/chat/ComponentSerialization|Lcom/mojang/serialization/Codec;|FLAT_CODEC
