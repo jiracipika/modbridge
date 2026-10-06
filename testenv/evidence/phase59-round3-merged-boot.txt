@@ -1,0 +1,69 @@
+# phase 5.9 — round-3 lanes merged + live-boot wall ladder (2026-10-06, 01:10–01:36)
+
+Round-3 objective COMPLETE: both lanes' walls (from phase-5.8 boot evidence) are
+BEHIND the mods on the live boot, plus three follow-up walls each precisely fixed
+the same session. Matrix 16/16 after the merge (twice-counted boot included).
+
+## Boot ladder (server-121, agent drop-in, clean cache each time)
+
+1. 01:10 boot: supp dies `ClassNotFoundException DataResult$PartialResult`
+   (linking moonlight's ConfigHelper$ConfigObject transitively — the lambda's
+   ERASED DESCRIPTOR carries the type; instruction scans alone miss it).
+   -> PartialResult -> DataResult$Error blanket typerename (member-identical for
+   the measured surface) + innerName follow fix (remapClass never remapped the
+   InnerClasses simple name — byte-level residue scan caught it).
+2. 01:17 boot: supp dies `ClassNotFoundException com.modbridge.shim.DataResultCompat`
+   (BASE name!) — the shim-relocation pass rewrote invokedynamic desc/bsm/Type
+   bsmArgs but NOT Handle bsmArgs; LambdaMetafactory's implMethod Handle kept the
+   base name. DataResultCompat = first shim with javac lambdas. Fixed + pinned by
+   a byte-level injectShims regression check.
+   moonlight (same boot) died at `NoSuchMethodError
+   CriteriaTriggers.register(CriterionTrigger)` — the criteria-lane shim PASSED
+   (GrindItemTrigger linked) and clinit advanced to registration.
+   -> inert CriteriaTriggersCompat pass-through shim (21.1 CriterionTrigger has NO
+   id accessor; BuiltInRegistries.TRIGGER_TYPES registration impossible faithfully
+   from the 1.20.1 call-site argument; single site ml MoonlightRegistry clinit).
+3. 01:26 boot: moonlight dies `ClassNotFoundException net.neoforged.network.NetworkRegistry`
+   (ModMessages clinit -> ChannelHandlerImpl); supp dies
+   `NoSuchMethodError ResourceLocation.isValidResourceLocation(String)` in
+   moonlight's config-value CORRECTOR (config-correct pass now runs — the eager
+   config load WORKS).
+   -> isValidResourceLocation -> tryParse(s) != null shim (single site, ml
+   ConfigBuilder$ResourceLocationConfigValue.lambda$new$0; static kind).
+4. 01:30 boot: supp dies `ClassNotFoundException EnchantmentTableBlock` (1.21
+   rename). -> SYSTEMATIC gone-class table: 1.20.1 srg classlist minus
+   classlist-1211 = 129 gone vanilla classes, intersected with BOTH jars' constant
+   pools, targets verified in classlist-1211 -> 8 rename rules (see
+   rules/typerenames.txt section; inner-class refs scanned = none; removed-no-
+   counterpart classes deliberately left unmapped and listed there).
+5. 01:35 boot: BOTH MODS CONVERGE on `ClassNotFoundException
+   net.neoforged.network.NetworkRegistry` — the NETWORKING wall, the next slice.
+   supp is past configs, dispenser behaviors (BlockSource moved), and all vanilla
+   renames; its construction reaches moonlight's channel creation.
+
+## Next slice — networking (surface fully inventoried, 01:36 scan)
+
+All call sites live in moonlight's ChannelHandlerImpl + 2 inner classes; supp
+reaches networking ONLY through moonlight's ChannelHandler API:
+- NetworkRegistry.newSimpleChannel(RL, Supplier<String>, Predicate, Predicate)
+  -> SimpleChannel (1 site, ChannelHandlerImpl.<init>) [static kind]
+- SimpleChannel: registerMessage(int, Class, BiConsumer, Function, BiConsumer,
+  Optional<NetworkDirection>) -> IndexedMessageCodec$MessageHandler;
+  send(PacketDistributor$PacketTarget, Object); sendToServer(Object)
+- NetworkEvent$Context: enqueueWork(Runnable), getDirection(), getNetworkManager(),
+  getSender(), setPacketHandled(Z)  [types must exist for lambda linking]
+- NetworkDirection: ordinal(), values()  [enum-shape shim needed]
+- PacketDistributor$PacketTarget: flows through send() signatures (PacketDistributor
+  itself still unprobed — GETSTATIC probe needed at slice time)
+Shape: ~5 inert facade shims (boot survival, network play NOT claimed — same
+acceptance as loot/condition/criteria lanes), then the faithful payload-registrar
+bridge as a later slice.
+
+## Gates at close
+
+- unit: ctor-retarget 3/3 (70 checks), shims 3/3 (169 checks, 30 shims), srg 4/4,
+  refmap 3/3; matrix 16/16.
+- offline: translated supp = zero old-name refs for the 8 renames (all BlockSource
+  refs at core/dispenser in descriptor positions); zero PartialResult bytes in
+  translated moonlight; shim statics fire 7/7 (DFU) + criteria + isValid sites
+  verified at the relocated owners.

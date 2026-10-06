@@ -912,3 +912,63 @@ interface.
 - Cosmetic: Object-member dispatch through the Object owner reaches the implementing
   object's override even where DFU 6's class had its own override — same method
   resolution javac-on-interface produces; no crash path.
+
+## Phase 5.9 — round-3 lanes merged; DFU member drift + criteria + rename family fall (2026-10-06)
+
+Both round-3 walls from 5.8's boot evidence are BEHIND the mods (live boots,
+evidence: testenv/evidence/phase59-round3-merged-boot.txt):
+
+1. **DFU 6->8 DataResult member drift** (config lane, 2adc671): new memberretargets
+   kind **`static`** — INVOKEVIRTUAL -> INVOKESTATIC on a per-mod shim whose first
+   parameter IS the receiver (stack shape identical, frames untouched; owner through
+   resolveShimTarget). `DataResultCompat` (semantics PORTED FROM THE DFU 6.0.8
+   BYTECODE: `addMessage` = "return the partial result instead of throwing when one
+   exists"; onError.accept fires on BOTH flag values before any throw; get() =
+   Either left(value)/right(Error)). 20 getOrThrow sites + 2 get() sites land on the
+   shim; the third shape (`PartialResult.message`, class GONE on DFU 8) rides a
+   blanket **PartialResult -> DataResult$Error typerename** (member-identical
+   surface: message/map/flatMap/equals/hashCode/toString) — which ALSO fixed the
+   DESCRIPTOR-level drift: moonlight's ConfigHelper lambda carries PartialResult in
+   its erased method descriptor + local-variable table, and linking resolves
+   descriptors (CNFE at boot, surfaced transitively from supp's construction).
+2. **AbstractCriterionTriggerInstance fold** (loot lane, salvaged from the
+   round-3 agent's partial work, e22883a): pure shim implementing the real 21.1
+   `SimpleCriterionTrigger$SimpleInstance` — translated subclasses are transitively
+   IS-A for the generic-bound link check. moonlight's GrindItemTrigger now LINKS
+   and its clinit advanced to registration.
+3. **CriteriaTriggers.register removed** (live-boot wall): 21.1 registers custom
+   triggers via BuiltInRegistries.TRIGGER_TYPES + explicit ResourceKey; the 21.1
+   CriterionTrigger interface exposes NO id accessor -> inert pass-through
+   `CriteriaTriggersCompat` (returns the trigger; single site ml MoonlightRegistry
+   clinit m_10595_).
+4. **ResourceLocation.isValidResourceLocation removed** (config-correct boot wall,
+   fired during the eager COMMON config load): ports 1:1 to
+   `tryParse(s) != null`; single site (ml ResourceLocationConfigValue corrector).
+5. **Vanilla class renames, systematic** (f72e169): 1.20.1 srg classlist minus
+   classlist-1211 = 129 gone classes, intersected with both jars' constant pools,
+   targets verified -> 8 typerename rules (EnchantingTableBlock, BlockSource ->
+   core/dispenser, BlockPathTypes -> PathType, ChunkStatus -> chunk/status,
+   CommandFunction -> commands/functions, LootTableReference -> NestedLootTable,
+   LiteralContents -> PlainTextContents$LiteralContents, PotionUtils ->
+   PotionContents). Removed-no-counterpart classes deliberately unmapped + listed
+   in the rules file.
+
+**Agent-caught relocator bug** (phase-5.9 boot): shim-class relocation rewrote
+invokedynamic desc/bsm/Type-bsmArgs but NOT **Handle** bsmArgs — the first
+lambda-bearing shim (DataResultCompat) boot-failed with CNFE at its own BASE name
+(LambdaMetafactory's implMethod Handle). Fixed + pinned by a byte-level
+injectShims regression check. Also: remapClass never remapped the InnerClasses
+entry's SIMPLE NAME (reflection-level residue) — now derived from the renamed
+internal name.
+
+**Both mods converge on ONE wall: networking.** `ClassNotFoundException
+net.neoforged.network.NetworkRegistry` (moonlight ModMessages clinit ->
+ChannelHandlerImpl; supp constructs channels through moonlight's ChannelHandler
+API only). Surface inventoried (evidence file): newSimpleChannel,
+SimpleChannel.registerMessage/send/sendToServer, NetworkEvent$Context (5 members),
+NetworkDirection (ordinal/values), PacketDistributor$PacketTarget. Next slice =
+~5 inert facade shims (boot survival; network play NOT claimed), faithful
+payload-registrar bridge after.
+
+Gates: ctor-retarget 70 checks, shims 169 checks (30 shims), srg-resolver 4/4,
+refmap 3/3, matrix 16/16.
