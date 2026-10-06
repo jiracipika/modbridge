@@ -26,3 +26,8 @@ net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/MovingBlock
 # explicit BlockSetType (GOLD/IRON) passes through with full type fidelity).
 net/mehvahdjukaar/supplementaries/common/block/blocks/GoldDoorBlock|net/minecraft/world/level/block/DoorBlock -> @SHIM@/DoorBlockCompat
 net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteDoorBlock|net/minecraft/world/level/block/DoorBlock -> @SHIM@/DoorBlockCompat
+
+# TrapDoorBlock: same 1.21 ctor drift as DoorBlock (measured: same signature swap,
+# protected; Gold/NetheriteTrapdoorBlock the measured subclasses).
+net/mehvahdjukaar/supplementaries/common/block/blocks/GoldTrapdoorBlock|net/minecraft/world/level/block/TrapDoorBlock -> @SHIM@/TrapDoorBlockCompat
+net/mehvahdjukaar/supplementaries/common/block/blocks/NetheriteTrapdoorBlock|net/minecraft/world/level/block/TrapDoorBlock -> @SHIM@/TrapDoorBlockCompat
