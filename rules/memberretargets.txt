@@ -109,3 +109,8 @@ net/mehvahdjukaar/moonlight/api/platform/forge/RegHelperImpl$EntryWrapper|()Ljav
 # faithful (1.20.1 RegistryObject.get() was itself a direct registry query).
 # Value desc written in FINAL space (DeferredHolder) - the shim compiles against it.
 net/minecraftforge/registries/RegistryObject|()Ljava/lang/Object;|get -> @SHIM@/EntryWrapperCompat|(Lnet/neoforged/neoforge/registries/DeferredHolder;)Ljava/lang/Object;|static
+
+# --- effects lane (phase 5.11): MobEffects fields became Holder<MobEffect> on 21.1
+# (holder rework). Field retargets with desc change (name same); CONSUMER methods
+# on the holder values are the next measured walls (getEffect() drift family).
+net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|GLOWING -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|GLOWING

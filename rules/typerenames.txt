@@ -264,3 +264,10 @@ net/minecraftforge/event/entity/player/EntityItemPickupEvent	@SHIM@/EntityItemPi
 # post-phase per player tick (1.20.1's handler ran both phases unchecked - Post-only
 # is the closest live bridge; phase semantics NOT claimed).
 net/minecraftforge/event/TickEvent$PlayerTickEvent	net/neoforged/neoforge/event/tick/PlayerTickEvent$Post
+
+# --- menu lane (phase 5.11): IContainerFactory lives at
+# net/neoforged/neoforge/network/ on 21.1 - the bare forge->neoforged PACKAGE
+# fallback drops the /neoforge/ segment and leaves net/neoforged/network/... which
+# does not exist (pre-existing fallback bug, first hit here). Exact typerename wins
+# over the prefix fallback.
+net/minecraftforge/network/IContainerFactory	net/neoforged/neoforge/network/IContainerFactory
