@@ -1,0 +1,8 @@
+# Shared shims (phase 5.12): injected ONLY into the owner mod at the FIXED
+# package com/modbridge/shim/shared/ - every translated jar's rules resolve the
+# same name, so shim-typed CROSS-MOD API signatures keep matching (per-mod
+# relocation diverged moonlight's and supplementaries' RecordItem descriptors and
+# the newMusicDisc call NSME'd at the item RegisterEvent). The owner module exports
+# the package (FML exports every package of a mod module); consumer mods read it
+# (cross-mod API).
+RecordItem=moonlight

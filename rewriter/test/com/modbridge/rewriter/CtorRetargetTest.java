@@ -16,6 +16,7 @@ import org.objectweb.asm.Handle;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
@@ -77,6 +78,18 @@ public final class CtorRetargetTest {
         realMemberRetargetsLoad();
         methodDrops();
         realMethodDropsLoad();
+        holderUnwrapMechanism();
+        holderUnwrapArgPushes();
+        holderUnwrapLocal();
+        holderUnwrapHolderConsumerUntouched();
+        realMethodUnwrapsLoad();
+        bareWrapMechanism();
+        bareWrapArgPushes();
+        bareWrapLocalReload();
+        bareWrapUntouchedShapes();
+        realMethodWrapsLoad();
+        starOwnerRetarget();
+        realPhase512RulesLoad();
         interfaceCallSites();
         interfaceInventoryMissingFileTolerated();
         indySamNameRemap();
@@ -191,8 +204,11 @@ public final class CtorRetargetTest {
                 "no uninit LabelNode left in any frame stack");
         for (AbstractInsnNode n : mn.instructions) {
             if (!(n instanceof FrameNode f)) continue;
-            check(RECEIVER_DESC.equals(f.stack.get(0)),
-                    "first uninit slot became the receiver type");
+            // frame stack slots carry the INTERNAL name (the L...;-form would crash
+            // the class with ClassFormatError "Illegal class name" - the 5.12
+            // normalization in fixArgRegionFrames)
+            check(NEW_OWNER.equals(f.stack.get(0)),
+                    "first uninit slot became the receiver type (internal name)");
             check("java/lang/String".equals(f.stack.get(1)),
                     "second uninit slot (the DUP copy) removed, args shifted up");
             check(f.stack.size() == 2, "frame stack has receiver + one arg");
@@ -260,7 +276,7 @@ public final class CtorRetargetTest {
                 .filter(l -> !l.isEmpty() && !l.startsWith("#"))
                 .toList();
         r.addCtorRetargetRules(lines);
-        check(r.ctorRetargets.size() == 1, "rules/ctorretargets.txt parses (1 rule)");
+        check(r.ctorRetargets.size() >= 1, "rules/ctorretargets.txt parses (the 5.12 AttributeModifier rule grew the file)");
         String[] rule = r.ctorRetargets.get(OLD_OWNER + "|" + OLD_DESC);
         check(rule != null, "ModConfig 4-arg ctor rule present");
         check(rule != null && "@SHIM@/ModConfigBridge".equals(rule[0])
@@ -599,6 +615,408 @@ public final class CtorRetargetTest {
         check(fi != null && fi.owner.equals("test/New") && fi.desc.equals("Ltest/NewVal;"),
                 "field retarget swaps owner+desc, opcode kept");
         check(r.memberRenamesApplied == 1, "field retarget counter = 1");
+    }
+
+    /** rules/methodunwraps.txt (phase 5.12): the getEffect Holder-unwrap pass */
+    void holderUnwrapMechanism() {
+        Rewriter r = new Rewriter();
+        r.holderUnwraps.put("net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect",
+                "net/minecraft/world/effect/MobEffect");
+        // immediate receiver consumer: getEffect -> isBeneficial
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC, "m", "(Lnet/minecraft/world/effect/MobEffectInstance;)Z", null, null);
+        mn.maxStack = 2;
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffectInstance", "getEffect",
+                "()Lnet/minecraft/core/Holder;", false));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffect", "isBeneficial", "()Z", false));
+        mn.instructions.add(new InsnNode(Opcodes.IRETURN));
+        cn.methods.add(mn);
+        r.repairHolderUnwraps(cn);
+        int values = count(mn, MethodInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/Holder") && x.name.equals("value"));
+        check(values == 1, "immediate receiver consumer: value() inserted once");
+        check(mn.instructions.get(2) instanceof MethodInsnNode,
+                "value() inserted between producer and consumer");
+        check(r.holderUnwrapsApplied == 1, "unwrap counter = 1");
+    }
+
+    /** the measured BambooSpikes third shape: args pushed between producer and the
+     *  receiver-consuming call (aconst_null, aload, invoke, i2d...) */
+    void holderUnwrapArgPushes() {
+        Rewriter r = new Rewriter();
+        r.holderUnwraps.put("net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect",
+                "net/minecraft/world/effect/MobEffect");
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC,
+                "m", "(Lnet/minecraft/world/entity/LivingEntity;)V", null, null);
+        mn.maxStack = 8;
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffectInstance", "getEffect",
+                "()Lnet/minecraft/core/Holder;", false));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffectInstance", "getAmplifier", "()I", false));
+        mn.instructions.add(new InsnNode(Opcodes.I2D));
+        mn.instructions.add(new InsnNode(Opcodes.DCONST_1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffect", "applyInstantenousEffect",
+                "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity;"
+                        + "Lnet/minecraft/world/entity/LivingEntity;ID)V", false));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.repairHolderUnwraps(cn);
+        int values = count(mn, MethodInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/Holder") && x.name.equals("value"));
+        check(values == 1, "arg-pushes shape: value() inserted right after the producer");
+        check(r.holderUnwrapsApplied == 1, "arg-pushes counter = 1");
+    }
+
+    /** the measured PotionNBTHelper shape: producer -> ASTORE -> ALOAD -> consumer */
+    void holderUnwrapLocal() {
+        Rewriter r = new Rewriter();
+        r.holderUnwraps.put("net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect",
+                "net/minecraft/world/effect/MobEffect");
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC,
+                "m", "(Lnet/minecraft/world/effect/MobEffectInstance;)V", null, null);
+        mn.maxStack = 2;
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffectInstance", "getEffect",
+                "()Lnet/minecraft/core/Holder;", false));
+        mn.instructions.add(new VarInsnNode(Opcodes.ASTORE, 2));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffect", "getCategory",
+                "()Lnet/minecraft/world/effect/MobEffectCategory;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.repairHolderUnwraps(cn);
+        int values = count(mn, MethodInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/Holder") && x.name.equals("value"));
+        check(values == 1, "local shape: value() inserted at the load site");
+        check(r.holderUnwrapsApplied == 1, "local counter = 1");
+    }
+
+    /** a consumer ALREADY on the Holder shape (the 5.11 desc rewrites) must stay
+     *  untouched: hasEffect(Holder) takes the producer result as an ARG */
+    void holderUnwrapHolderConsumerUntouched() {
+        Rewriter r = new Rewriter();
+        r.holderUnwraps.put("net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect",
+                "net/minecraft/world/effect/MobEffect");
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC,
+                "m", "(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/effect/MobEffectInstance;)Z", null, null);
+        mn.maxStack = 2;
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/effect/MobEffectInstance", "getEffect",
+                "()Lnet/minecraft/core/Holder;", false));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/entity/LivingEntity", "hasEffect",
+                "(Lnet/minecraft/core/Holder;)Z", false));
+        mn.instructions.add(new InsnNode(Opcodes.IRETURN));
+        cn.methods.add(mn);
+        r.repairHolderUnwraps(cn);
+        int values = count(mn, MethodInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/Holder") && x.name.equals("value"));
+        check(values == 0, "Holder-shaped consumer: no insert");
+        check(r.holderUnwrapsApplied == 0, "Holder-shaped consumer: counter stays 0");
+    }
+
+    /** the shipped methodunwraps.txt parses and the CLI loader picks it up */
+    void realMethodUnwrapsLoad() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addUnwrapRules(Files.readAllLines(Path.of("rules/methodunwraps.txt")));
+        check(r.holderUnwraps.containsKey(
+                "net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect"),
+                "rules/methodunwraps.txt parses with the getEffect key");
+        check("net/minecraft/world/effect/MobEffect".equals(
+                r.holderUnwraps.get("net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect")),
+                "getEffect unwrap target is the bare MobEffect owner");
+        Rewriter full = new Rewriter();
+        full.loadRules(Path.of("rules"));
+        check(full.holderUnwraps.size() >= 1, "full rules load includes unwraps");
+    }
+
+    /** phase 5.12: the bare-wrap pass (the inverse of the unwrap) - a wrapper-get
+     *  value (checkcast bare type) landing in a Holder-typed argument slot gets
+     *  Registry.wrapAsHolder inserted. Measured wall: supp ModFluids.lambda$static$2
+     *  building the LumiseneBottleItem food effect - vanilla MobEffectInstance.<init>
+     *  called Holder.value() on the bare FlammableEffect (ICCE at the fluid
+     *  RegisterEvent). */
+    void bareWrapMechanism() {
+        Rewriter r = new Rewriter();
+        r.bareWraps.put("net/minecraft/world/effect/MobEffect",
+                new String[]{"net/minecraft/core/Holder", "net/minecraft/core/registries/BuiltInRegistries",
+                        "MOB_EFFECT", "Lnet/minecraft/core/Registry;"});
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "(Ljava/lang/Object;I)Lnet/minecraft/world/effect/MobEffectInstance;", null, null);
+        mn.maxStack = 4;
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/world/effect/MobEffect"));
+        mn.instructions.add(new VarInsnNode(Opcodes.ILOAD, 1));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "net/minecraft/world/effect/MobEffectInstance", "<init>",
+                "(Lnet/minecraft/core/Holder;I)V", false));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        r.repairBareWraps(cn);
+        MethodInsnNode wrap = first(mn, MethodInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/Registry") && x.name.equals("wrapAsHolder"));
+        check(wrap != null && wrap.itf && wrap.desc.equals("(Ljava/lang/Object;)Lnet/minecraft/core/Holder;"),
+                "wrap inserted: Registry.wrapAsHolder (itf, erased desc)");
+        FieldInsnNode reg = first(mn, FieldInsnNode.class,
+                x -> x.owner.equals("net/minecraft/core/registries/BuiltInRegistries"));
+        check(reg != null && reg.name.equals("MOB_EFFECT") && reg.desc.equals("Lnet/minecraft/core/Registry;"),
+                "wrap inserted: BuiltInRegistries.MOB_EFFECT getstatic before the swap");
+        check(count(mn, InsnNode.class, x -> x.getOpcode() == Opcodes.SWAP) == 1,
+                "wrap inserted: SWAP between getstatic and the call");
+        int idx = indexOf(mn, wrap);
+        int castIdx = indexOf(mn, first(mn, TypeInsnNode.class, x -> true));
+        check(idx == castIdx + 3, "wrap sits right after the producer (getstatic, swap, call)");
+        check(r.bareWrapsApplied == 1, "wrap counter = 1");
+        check(mn.maxStack >= 2, "maxStack bumped for the transient registry pair");
+    }
+
+    /** arg-push shape (FlammableLiquidBlock/SackItem): constants and conversions
+     *  pushed between the producer and the Holder-arg consumer; a MobEffect-typed
+     *  consumer (ml Utils.getID duck-typing) must stay untouched */
+    void bareWrapArgPushes() {
+        Rewriter r = new Rewriter();
+        r.bareWraps.put("net/minecraft/world/effect/MobEffect",
+                new String[]{"net/minecraft/core/Holder", "net/minecraft/core/registries/BuiltInRegistries",
+                        "MOB_EFFECT", "Lnet/minecraft/core/Registry;"});
+        //Holder-landing site with arithmetic between producer and consumer
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "(Ljava/lang/Object;I)V", null, null);
+        mn.maxStack = 6;
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/world/effect/MobEffect"));
+        mn.instructions.add(new IntInsnNode(Opcodes.SIPUSH, 400));
+        mn.instructions.add(new VarInsnNode(Opcodes.ILOAD, 1));
+        mn.instructions.add(new InsnNode(Opcodes.IDIV));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "net/minecraft/world/effect/MobEffectInstance", "<init>",
+                "(Lnet/minecraft/core/Holder;I)V", false));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.repairBareWraps(cn);
+        check(r.bareWrapsApplied == 1, "arg-push shape with arithmetic: wrap fires");
+        // bare-typed consumer: NO wrap (the value is the receiver of a MobEffect call)
+        ClassNode cn2 = new ClassNode();
+        cn2.name = "test/Host2";
+        cn2.version = Opcodes.V17;
+        cn2.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn2.superName = "java/lang/Object";
+        MethodNode mn2 = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "(Ljava/lang/Object;)I", null, null);
+        mn2.maxStack = 2;
+        mn2.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/world/effect/MobEffect"));
+        mn2.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                "test/Utils", "getID", "(Lnet/minecraft/world/effect/MobEffect;)I", false));
+        mn2.instructions.add(new InsnNode(Opcodes.IRETURN));
+        cn2.methods.add(mn2);
+        r.repairBareWraps(cn2);
+        check(r.bareWrapsApplied == 1, "MobEffect-typed consumer stays untouched");
+    }
+
+    /** local + reload shape (BombEntity): producer -> ASTORE -> ALOAD (ifnull
+     *  null-check) -> reload -> arg-pushes -> Holder-arg ctor: wrap at the RELOAD
+     *  site (the null-check load keeps the bare value) */
+    void bareWrapLocalReload() {
+        Rewriter r = new Rewriter();
+        r.bareWraps.put("net/minecraft/world/effect/MobEffect",
+                new String[]{"net/minecraft/core/Holder", "net/minecraft/core/registries/BuiltInRegistries",
+                        "MOB_EFFECT", "Lnet/minecraft/core/Registry;"});
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "(Ljava/lang/Object;Lnet/minecraft/world/entity/LivingEntity;)V", null, null);
+        mn.maxStack = 6;
+        LabelNode lNull = new LabelNode();
+        LabelNode lEnd = new LabelNode();
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/world/effect/MobEffect"));
+        mn.instructions.add(new VarInsnNode(Opcodes.ASTORE, 2));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        mn.instructions.add(new JumpInsnNode(Opcodes.IFNULL, lEnd));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new TypeInsnNode(Opcodes.NEW, "net/minecraft/world/effect/MobEffectInstance"));
+        mn.instructions.add(new InsnNode(Opcodes.DUP));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        mn.instructions.add(new IntInsnNode(Opcodes.SIPUSH, 400));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "net/minecraft/world/effect/MobEffectInstance", "<init>",
+                "(Lnet/minecraft/core/Holder;I)V", false));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/world/entity/LivingEntity", "addEffect",
+                "(Lnet/minecraft/world/effect/MobEffectInstance;)Z", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.instructions.add(lEnd);
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.repairBareWraps(cn);
+        check(r.bareWrapsApplied == 1, "local + reload shape: exactly one wrap");
+        int reload = indexOf(mn, first(mn, VarInsnNode.class,
+                x -> x.getOpcode() == Opcodes.ALOAD && x.var == 2
+                        && x.getNext() instanceof FieldInsnNode fi && fi.name.equals("MOB_EFFECT")));
+        int wrap = indexOf(mn, first(mn, MethodInsnNode.class,
+                x -> x.name.equals("wrapAsHolder")));
+        check(wrap == reload + 3, "wrap inserted right after the RELOAD (getstatic, swap, call; the null-check load keeps the bare value)");
+    }
+
+    /** consumers that must NOT wrap: invokestatic targets (QuarkCompat Set.of) and
+     *  MobEffect-typed landing args */
+    void bareWrapUntouchedShapes() {
+        Rewriter r = new Rewriter();
+        r.bareWraps.put("net/minecraft/world/effect/MobEffect",
+                new String[]{"net/minecraft/core/Holder", "net/minecraft/core/registries/BuiltInRegistries",
+                        "MOB_EFFECT", "Lnet/minecraft/core/Registry;"});
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "(Ljava/lang/Object;)V", null, null);
+        mn.maxStack = 3;
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "net/minecraft/world/effect/MobEffect"));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                "java/util/Set", "of", "(Ljava/lang/Object;)Ljava/util/Set;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.repairBareWraps(cn);
+        check(r.bareWrapsApplied == 0, "invokestatic consumer (erased Object arg): no wrap");
+    }
+
+    /** the shipped methodwraps.txt parses */
+    void realMethodWrapsLoad() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addWrapRules(Files.readAllLines(Path.of("rules/methodwraps.txt")));
+        String[] rule = r.bareWraps.get("net/minecraft/world/effect/MobEffect");
+        check(rule != null && rule[0].equals("net/minecraft/core/Holder")
+                && rule[1].equals("net/minecraft/core/registries/BuiltInRegistries")
+                && rule[2].equals("MOB_EFFECT"),
+                "rules/methodwraps.txt parses with the MobEffect -> MOB_EFFECT registry bridge");
+        Rewriter full = new Rewriter();
+        full.loadRules(Path.of("rules"));
+        check(full.bareWraps.size() >= 1, "full rules load includes wraps");
+    }
+
+    /** phase 5.12: the "*" owner fallback for memberretargets (javac emits the
+     *  RECEIVER'S static type as owner - OverencumberedEffect calls the inherited
+     *  MobEffect.addAttributeModifier) */
+    void starOwnerRetarget() {
+        Rewriter r = new Rewriter();
+        String desc = "(Lnet/minecraft/world/entity/ai/attributes/Attribute;Ljava/lang/String;"
+                + "DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/effect/MobEffect;";
+        String shimDesc = "(Lnet/minecraft/world/effect/MobEffect;Lnet/minecraft/core/Holder;Ljava/lang/String;"
+                + "DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/effect/MobEffect;";
+        r.memberRetargets.put("*|" + desc + "|addAttributeModifier",
+                new String[]{"@SHIM@/MobEffectCompat", shimDesc, "static"});
+        ClassNode cn = new ClassNode();
+        cn.name = "test/SomeEffect";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "net/minecraft/world/effect/MobEffect";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        mn.maxStack = 6;
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "net/minecraft/world/effect/MobEffect", "<init>", "()V", false));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL)); // the attribute arg
+        mn.instructions.add(new LdcInsnNode("uuid"));
+        mn.instructions.add(new InsnNode(Opcodes.DCONST_0));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL)); // operation
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "test/SomeEffect", "addAttributeModifier", desc, false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        r.shimRoot = "com/modbridge/shim/testmod";
+        r.shimSimpleNames.put("MobEffectCompat",
+                "com/modbridge/shim/base/MobEffectCompat");
+        r.applyMemberRenames(cn);
+        MethodInsnNode call = first(mn, MethodInsnNode.class,
+                x -> x.name.equals("addAttributeModifier"));
+        check(call != null && call.getOpcode() == Opcodes.INVOKESTATIC
+                && call.owner.equals("com/modbridge/shim/testmod/MobEffectCompat")
+                && call.desc.equals(shimDesc),
+                "star-owner retarget: subclass receiver -> per-mod shim static");
+    }
+
+    /** the shipped phase-5.12 rule lines must parse with keys in owner|desc|name
+     *  order (the swapped-order lesson: a name-in-desc-position key loads fine and
+     *  silently never fires) */
+    void realPhase512RulesLoad() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        String addAttrDesc = "(Lnet/minecraft/world/entity/ai/attributes/Attribute;Ljava/lang/String;"
+                + "DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/effect/MobEffect;";
+        check(r.memberRetargets.containsKey("*|" + addAttrDesc + "|addAttributeModifier"),
+                "rules: star addAttributeModifier retarget present (desc before name)");
+        String[] attr = r.memberRetargets.get(
+                "net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/world/entity/ai/attributes/Attribute;|MOVEMENT_SPEED");
+        check(attr != null && attr[1].equals("Lnet/minecraft/core/Holder;")
+                        && attr[2].equals("MOVEMENT_SPEED"),
+                "rules: Attributes.MOVEMENT_SPEED field desc retarget present");
+        check(r.memberRetargets.containsKey(
+                "net/mehvahdjukaar/moonlight/api/platform/forge/ForgeHelperImpl|(Lnet/minecraft/world/entity/LivingEntity;)D|getReachDistance"),
+                "rules: getReachDistance static retarget present (desc before name)");
+        check(r.methodDrops.contains(
+                "net/mehvahdjukaar/moonlight/api/platform/forge/ForgeHelperImpl|(Lnet/minecraft/world/entity/LivingEntity;)D|getReachDistance"),
+                "rules: getReachDistance body drop present (owner|desc|name)");
+        check(r.remapType("net/minecraftforge/common/extensions/IForgeMenuType")
+                        .equals("net/neoforged/neoforge/common/extensions/IMenuTypeExtension"),
+                "rules: IForgeMenuType -> IMenuTypeExtension typerename present");
+        check(r.memberDescRenames.containsKey(
+                "*|getAttributeValue|(Lnet/minecraft/world/entity/ai/attributes/Attribute;)D"),
+                "rules: * getAttributeValue desc rewrite present");
+        check(r.memberRenames.get(
+                "net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation|Lnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;|MULTIPLY_TOTAL")
+                .equals("ADD_MULTIPLIED_TOTAL"),
+                "rules: Operation.MULTIPLY_TOTAL = ADD_MULTIPLIED_TOTAL enum-constant rename");
+        check(r.memberRenames.get(
+                "net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation|Lnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;|ADDITION")
+                .equals("ADD_VALUE"),
+                "rules: Operation.ADDITION = ADD_VALUE enum-constant rename");
     }
 
     String applySuperSwapIn(Rewriter r, String className, String superName) {

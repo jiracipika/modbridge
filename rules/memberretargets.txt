@@ -120,3 +120,108 @@ net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|CON
 net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|INVISIBILITY -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|INVISIBILITY
 net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|WEAKNESS -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|WEAKNESS
 net/minecraft/world/effect/MobEffects|Lnet/minecraft/world/effect/MobEffect;|POISON -> net/minecraft/world/effect/MobEffects|Lnet/minecraft/core/Holder;|POISON
+
+# --- effects/attributes lane (phase 5.12): the mob_effect RegisterEvent wall.
+# 1.20.1 MobEffect.addAttributeModifier(Attribute, String uuid, double, Operation)
+# is gone on 21.1 - the attribute became Holder AND the uuid String became a
+# ResourceLocation (the (UUID,String) AttributeModifier ctor went with it). The
+# measured wall: supp OverencumberedEffect.<init> NSFE'd inside the mob_effect
+# event's DeferredRegister.addEntries, aborting it BEFORE supplementaries:flammable
+# registered - which surfaced later as the item-time EntryWrapperCompat
+# "registry value not present: mob_effect/supplementaries:flammable" wall. Static
+# kind: receiver-prepended shim converts the uuid to a stable "modbridge/<uuid>"
+# key (MobEffectCompat). "*" owner: javac emits the RECEIVER'S STATIC TYPE as the
+# call-site owner (OverencumberedEffect.<init> calls the MobEffect member it
+# inherits), so the rule is owner-independent - safe: no mod class owns this
+# (name,desc) pair (census: 1 site, both jars).
+*|(Lnet/minecraft/world/entity/ai/attributes/Attribute;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/effect/MobEffect;|addAttributeModifier -> @SHIM@/MobEffectCompat|(Lnet/minecraft/world/effect/MobEffect;Lnet/minecraft/core/Holder;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/effect/MobEffect;|static
+
+# 21.1 Attributes fields are Holder<Attribute> (same drift family as the 5.11
+# MobEffects fields). Measured sites: MOVEMENT_SPEED in OverencumberedEffect.<init>
+# (the boot wall above), FOLLOW_RANGE in supp AbstractMobContainerItem (pairs with
+# the *|getAttributeValue desc rewrite in memberdescrenames.txt), ATTACK_DAMAGE +
+# ATTACK_SPEED in supp WrenchItem's dead m_7167_ override (never dispatched on 21.1
+# - Item.getAttributeModifiers(EquipmentSlot) was removed; retargeted for
+# link-lane hygiene).
+net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/world/entity/ai/attributes/Attribute;|MOVEMENT_SPEED -> net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/core/Holder;|MOVEMENT_SPEED
+net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/world/entity/ai/attributes/Attribute;|FOLLOW_RANGE -> net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/core/Holder;|FOLLOW_RANGE
+net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/world/entity/ai/attributes/Attribute;|ATTACK_DAMAGE -> net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/core/Holder;|ATTACK_DAMAGE
+net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/world/entity/ai/attributes/Attribute;|ATTACK_SPEED -> net/minecraft/world/entity/ai/attributes/Attributes|Lnet/minecraft/core/Holder;|ATTACK_SPEED
+
+# moonlight ForgeHelperImpl.getReachDistance reads the removed ForgeMod.BLOCK_REACH
+# RegistryObject (phantom package-fallback owner). Mojang absorbed the attribute as
+# vanilla Attributes.BLOCK_INTERACTION_RANGE (same 5.0 default): forward the whole
+# helper onto it (the orphan body is method-dropped - see methoddrops.txt).
+net/mehvahdjukaar/moonlight/api/platform/forge/ForgeHelperImpl|(Lnet/minecraft/world/entity/LivingEntity;)D|getReachDistance -> @SHIM@/BlockReachCompat|(Lnet/minecraft/world/entity/LivingEntity;)D|static
+
+# 21.1 removed the Item attack UUID constants (attributes became component-keyed
+# ResourceLocations); supp WrenchItem's clinit copies both into its own statics and
+# its 1.20.1 getAttributeModifiers override (dead on 21.1 - Item modifiers are
+# component-driven) uses them. Shim carries the canonical 1.20.1 values so the
+# clinit runs; "*" owner: javac emits the subclass for inherited statics.
+*|Ljava/util/UUID;|BASE_ATTACK_DAMAGE_UUID -> @SHIM@/ItemCompat|Ljava/util/UUID;|BASE_ATTACK_DAMAGE_UUID
+*|Ljava/util/UUID;|BASE_ATTACK_SPEED_UUID -> @SHIM@/ItemCompat|Ljava/util/UUID;|BASE_ATTACK_SPEED_UUID
+
+# --- config lane (phase 5.12): 1.20.1 FML ModLoader state machine is gone on 21.1.
+# moonlight's config-load guard + isModLoadingValid route to the FmlCompat shim.
+net/minecraftforge/fml/ModLoader|()Lnet/minecraftforge/fml/ModLoader;|get -> @SHIM@/FmlCompat|()Lnet/neoforged/fml/ModLoader;|static
+net/minecraftforge/fml/ModLoader|(Ljava/lang/String;)Z|hasCompletedState -> @SHIM@/FmlCompat|(Lnet/neoforged/fml/ModLoader;Ljava/lang/String;)Z|static
+net/minecraftforge/fml/ModLoader|()Z|isLoadingStateValid -> @SHIM@/FmlCompat|()Z|static
+
+# --- setup lane (phase 5.12, FMLCommonSetupEvent boot wall): the POTION registry
+# demoted from DefaultedRegistry to plain Registry on 1.20.5+ (potions lost default
+# members). Desc swap, name same. Measured: ml Utils + supp BambooSpikesBlockTile /
+# BambooSpikesTippedItem / RandomArrowFunction / ModCreativeTabs / SpecialRecipeDisplays.
+net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/DefaultedRegistry;|POTION -> net/minecraft/core/registries/BuiltInRegistries|Lnet/minecraft/core/Registry;|POTION
+
+# --- setup lane (phase 5.12, follow-up to the POTION desc swap): the POTION
+# registry instance is a plain MappedRegistry on 21.1 and DefaultedRegistry became
+# an INTERFACE that MappedRegistry does NOT implement - invokeinterface against it
+# ICCEs ("MappedRegistry does not implement the requested interface"). Registry (the
+# parent interface) has all three members on 21.1: owner swap, kind interface.
+net/minecraft/core/DefaultedRegistry|(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;|getKey -> net/minecraft/core/Registry|(Ljava/lang/Object;)Lnet/minecraft/resources/ResourceLocation;|interface
+net/minecraft/core/DefaultedRegistry|(Ljava/lang/Object;)Lnet/minecraft/core/Holder;|wrapAsHolder -> net/minecraft/core/Registry|(Ljava/lang/Object;)Lnet/minecraft/core/Holder;|interface
+net/minecraft/core/DefaultedRegistry|()Ljava/util/Iterator;|iterator -> net/minecraft/core/Registry|()Ljava/util/Iterator;|interface
+
+# --- potion lane (phase 5.12, FMLCommonSetupEvent): 1.20.1 forge's
+# PotionContents.setPotion(ItemStack, Potion) extension is gone on 21.1 (potion
+# content is a data component). Static-kind retarget to the per-mod shim, which
+# wraps the bare potion and sets DataComponents.POTION_CONTENTS in place.
+# the call site is POTIONUTILS.setPotion in raw space (the 5.9 PotionUtils ->
+# PotionContents typerename moved the owner onto a class that has no such member)
+# the potion arg is Object in the shim: both flow shapes arrive (bare Potion from
+# getPotion sites, Holder from the retargeted Potions.* fields)
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/alchemy/Potion;)Lnet/minecraft/world/item/ItemStack;|setPotion -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;Ljava/lang/Object;)Lnet/minecraft/world/item/ItemStack;|static
+
+# --- setup lane (phase 5.12): ExtraCodecs.stringResolverCodec moved to DFU 8's
+# Codec.stringResolver (identical shape). The static-kind retarget lands INVOKESTATIC
+# itf=false; repairInterfaceCallSites (runs last, owner is an inventoried interface)
+# flips it to InterfaceMethodref - the proven DataResult ICCE path.
+net/minecraft/util/ExtraCodecs|(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;|stringResolver -> com/mojang/serialization/Codec|(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;|static
+
+# --- setup lane (phase 5.12): 1.20.1 DyeColor.getTextureDiffuseColors()[F became
+# the singular getTextureDiffuseColor():I on 1.20.5+ (the float triple packed into
+# one ARGB int). Static-kind retarget to the per-mod shim, which unpacks it back.
+net/minecraft/world/item/DyeColor|()[F|getTextureDiffuseColors -> @SHIM@/DyeColorCompat|(Lnet/minecraft/world/item/DyeColor;)[F|static
+
+# --- setup lane (phase 5.12, live-boot): the CauldronInteraction.EMPTY/WATER maps
+# became InteractionMap records on 21.1 (LAVA/POWDER_SNOW unused by the trial jars).
+# Field retargets to per-mod shim statics that MIRROR the live inner maps (getstatic
+# kept; reads AND puts land on the real maps). BANNER/DYED_ITEM remain plain
+# CauldronInteraction VALUES on 21.1 (same name+desc; the 1.20.1 code puts them as
+# map VALUES) - no rule needed. Measured: EMPTY.put + WATER/BANNER value puts (supp
+# CauldronBehaviorsManager), WATER.entrySet iteration (faucet interactions).
+net/minecraft/core/cauldron/CauldronInteraction|Ljava/util/Map;|EMPTY -> @SHIM@/CauldronCompat|Ljava/util/Map;|EMPTY
+net/minecraft/core/cauldron/CauldronInteraction|Ljava/util/Map;|WATER -> @SHIM@/CauldronCompat|Ljava/util/Map;|WATER
+
+# --- potion lane (phase 5.12, same holder-rework family as the 5.11 MobEffects
+# fields): 21.1 Potions constants are Holder<Potion>. Measured fields (desc swap,
+# name same): POISON/LONG_POISON/STRONG_POISON (supp bamboo-spikes potion logic),
+# EMPTY/WATER (ml SoftFluidStack + supp).
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|POISON -> net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|POISON
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|LONG_POISON -> net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|LONG_POISON
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|STRONG_POISON -> net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|STRONG_POISON
+# EMPTY left the registry on 1.20.5+ ("no potion" = absent content): the sentinel
+# lives on the per-mod PotionCompat shim as a synthetic direct Holder.
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|EMPTY -> @SHIM@/PotionCompat|Lnet/minecraft/core/Holder;|EMPTY
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|WATER -> net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|WATER

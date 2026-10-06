@@ -1,10 +1,14 @@
 com/modbridge/shim/AbstractIngredient
 com/modbridge/shim/ArmorItemCompat
 com/modbridge/shim/ArmorMaterialCompat
+com/modbridge/shim/AttributeModifierCompat
+com/modbridge/shim/BlockReachCompat
 com/modbridge/shim/BucketItemCompat
+com/modbridge/shim/CauldronCompat
 com/modbridge/shim/CriteriaTriggersCompat
 com/modbridge/shim/DataResultCompat
 com/modbridge/shim/DoorBlockCompat
+com/modbridge/shim/DyeColorCompat
 com/modbridge/shim/DyeableItem
 com/modbridge/shim/DyeableLeatherItem
 com/modbridge/shim/Enchantment$Rarity
@@ -14,10 +18,13 @@ com/modbridge/shim/EntityItemPickupEvent
 com/modbridge/shim/EntityItemPickupEvent$Result
 com/modbridge/shim/EntryWrapperCompat
 com/modbridge/shim/FenceGateBlockCompat
+com/modbridge/shim/FmlCompat
 com/modbridge/shim/GravelBlock
 com/modbridge/shim/IIngredientSerializer
+com/modbridge/shim/ItemCompat
 com/modbridge/shim/LivingTickEvent
 com/modbridge/shim/MessageHandler
+com/modbridge/shim/MobEffectCompat
 com/modbridge/shim/NetworkDirection
 com/modbridge/shim/NetworkEvent$Context
 com/modbridge/shim/NetworkRegistryCompat
@@ -25,6 +32,8 @@ com/modbridge/shim/ObfuscationReflectionHelper
 com/modbridge/shim/PacketDistributor
 com/modbridge/shim/PacketDistributor$PacketTarget
 com/modbridge/shim/PacketDistributor$TargetPoint
+com/modbridge/shim/PotionCompat
+com/modbridge/shim/PotionContentsCompat
 com/modbridge/shim/RecordItem
 com/modbridge/shim/RegistryCompat
 com/modbridge/shim/ResourceLocationCompat

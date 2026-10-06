@@ -1,0 +1,22 @@
+# Holder-unwrap call sites (phase 5.12): getters whose 21.1 return became a Holder,
+# whose remaining consumers still expect the BARE value. Keys are FINAL space and
+# the desc is the ALREADY-REWRITTEN (post memberdescrenames) shape; the value is
+# the bare type. The pass (repairHolderUnwraps) inserts INVOKEINTERFACE
+# Holder.value()Lbare; before receiver-calls/instanceof/checkcast/areturn/putfield
+# into the bare type (and after an ALOAD that feeds one), so the class links:
+# measured wall: supp BambooSpikesBlockTile.interactWithEntity VerifyError'd at load
+# ("Holder is not assignable to MobEffect") during the entity registration event -
+# the phase 5.11 getEffect->Holder desc rewrite made MobEffect-receiver calls
+# unverifiable. Sites whose consumers ride the Holder shape (hasEffect/getEffect-arg
+# family, Holder-taking MobEffectInstance ctors) are NOT matched and stay unwrapped.
+net/minecraft/world/effect/MobEffectInstance|()Lnet/minecraft/core/Holder;|getEffect -> net/minecraft/world/effect/MobEffect
+
+# FIELD producers (phase 5.12): memberretargets-swapped Holder-typed static fields
+# whose values flow into locals typed bare by the ORIGINAL frames (measured:
+# supp TippedBambooSpikesRecipe.assemble VerifyError, local[3] Holder vs Potion).
+# EMPTY rides the per-mod PotionCompat shim: @SHIM@ keys resolve per-jar at lookup
+@SHIM@/PotionCompat|Lnet/minecraft/core/Holder;|EMPTY -> net/minecraft/world/item/alchemy/Potion
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|POISON -> net/minecraft/world/item/alchemy/Potion
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|LONG_POISON -> net/minecraft/world/item/alchemy/Potion
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|STRONG_POISON -> net/minecraft/world/item/alchemy/Potion
+net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|WATER -> net/minecraft/world/item/alchemy/Potion

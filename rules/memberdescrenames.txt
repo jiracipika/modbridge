@@ -34,3 +34,8 @@ net/minecraft/world/effect/MobEffectInstance|getEffect|()Lnet/minecraft/world/ef
 # receivers need the owner-independent fallback above. Scoped to this effects family
 # (write * rules ONLY for (name,desc) pairs no mod class plausibly owns).
 
+# --- attributes lane (phase 5.12): 21.1 getAttributeValue takes Holder<Attribute>.
+# Feeds off the Attributes field retargets above (the arg is a Holder at those
+# sites). "*" owner: the receiver is the entity (subclass receivers carry their own
+# owner). Only the LivingEntity-family shape (name+desc) matches.
+*|getAttributeValue|(Lnet/minecraft/world/entity/ai/attributes/Attribute;)D=(Lnet/minecraft/core/Holder;)D

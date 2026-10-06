@@ -207,7 +207,7 @@ net/minecraftforge/common/crafting/AbstractIngredient	@SHIM@/AbstractIngredient
 # registration itself NOT claimed. IIngredientSerializer<T> (gone - codecs; single
 # implementer moonlight BlockTypeSwapIngredientImpl$1, parse/parse/write shapes) ->
 # interface shim; registration + JSON recipes NOT claimed.
-net/minecraft/world/item/RecordItem	@SHIM@/RecordItem
+net/minecraft/world/item/RecordItem	@SHIM-SHARED@/RecordItem
 net/minecraftforge/common/crafting/IIngredientSerializer	@SHIM@/IIngredientSerializer
 
 # --- removed-API ladder, iteration 3 (phase 5.10): GravelBlock (gone on 21.1 -
@@ -271,3 +271,8 @@ net/minecraftforge/event/TickEvent$PlayerTickEvent	net/neoforged/neoforge/event/
 # does not exist (pre-existing fallback bug, first hit here). Exact typerename wins
 # over the prefix fallback.
 net/minecraftforge/network/IContainerFactory	net/neoforged/neoforge/network/IContainerFactory
+# --- menu lane (phase 5.12): 1.20.1 IForgeMenuType.create(IContainerFactory) has
+# the exact semantic equivalent IMenuTypeExtension.create on 21.1 (same name, same
+# desc, same interface-static shape; the raw jar already carries itf=true which
+# survives the owner swap). The arg type rides the 5.11 IContainerFactory rename.
+net/minecraftforge/common/extensions/IForgeMenuType	net/neoforged/neoforge/common/extensions/IMenuTypeExtension

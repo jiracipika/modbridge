@@ -11,6 +11,7 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.InnerClassNode;
 import org.objectweb.asm.tree.InsnNode;
@@ -126,6 +127,15 @@ public class Rewriter {
     /** call-site retargets for members that became interface-default methods:
      *  owner|desc|name -> newOwner|newDesc|interface-or-virtual */
     final Map<String, String[]> memberRetargets = new HashMap<>();
+    /** holder-unwrap call sites (rules/methodunwraps.txt): getters whose 21.1 return
+     *  became a Holder (owner|desc|name, FINAL space, post desc-rewrite) -> the bare
+     *  value type their remaining consumers expect. See repairHolderUnwraps. */
+    final Map<String, String> holderUnwraps = new HashMap<>();
+    int holderUnwrapsApplied;
+    /** bare-wrap call sites (rules/methodwraps.txt): 1.20.1 checkcast-desc -> the
+     *  21.1 Holder type + the registry whose wrapAsHolder bridges. See repairBareWraps. */
+    final Map<String, String[]> bareWraps = new HashMap<>();
+    int bareWrapsApplied;
     /** ctor-call retargets for constructors replaced by a public factory-style call:
      *  owner|ctorDesc -> newOwner|receiverField|newMethod|newMethodDesc */
     final Map<String, String[]> ctorRetargets = new HashMap<>();
@@ -158,6 +168,16 @@ public class Rewriter {
     String shimRoot = null;
     /** shim simple names (last path segment) -> original internal name (unique) */
     final Map<String, String> shimSimpleNames = new HashMap<>();
+    /** shared shims (rules/shims-shared.txt): simple name -> owner mod id. A shared
+     *  shim is injected ONLY into its owner's jar at the FIXED package
+     *  com/modbridge/shim/shared/ (never per-mod): rules referencing it resolve
+     *  identically in every translated jar, so shim-typed CROSS-MOD API signatures
+     *  (measured: moonlight PlatHelper.newMusicDisc returning the RecordItem shim,
+     *  called from supplementaries) keep matching - per-mod relocation diverged the
+     *  two descriptors and the call NSME'd at the item RegisterEvent. The owner's
+     *  module exports the package (FML exports every package of a mod module) and
+     *  consumer mods already read it (cross-mod API). */
+    final Map<String, String> sharedShims = new HashMap<>();
 
     // phase-4 accounting (mixin refmap remap + drift neutralization)
     int mixinClassesSeen;
@@ -199,6 +219,8 @@ public class Rewriter {
         addDescRules(readLines(rulesDir.resolve("memberdescrenames.txt")));
         addSrgRules(readLines(rulesDir.resolve("srgmembers.txt")));
         addRetargetRules(readLines(rulesDir.resolve("memberretargets.txt")));
+        addUnwrapRules(readLinesOptional(rulesDir.resolve("methodunwraps.txt")));
+        addWrapRules(readLinesOptional(rulesDir.resolve("methodwraps.txt")));
         addCtorRetargetRules(readLines(rulesDir.resolve("ctorretargets.txt")));
         addMethodDrops(readLines(rulesDir.resolve("methoddrops.txt")));
         addSuperSwapRules(readLinesOptional(rulesDir.resolve("superswaps.txt")));
@@ -206,6 +228,7 @@ public class Rewriter {
         addInterfaceInventory(readLines(rulesDir.resolve("interfaces-1211.txt")));
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
+        addSharedShims(readLinesOptional(rulesDir.resolve("shims-shared.txt")));
         loadShimsFromDir(rulesDir.resolve("shims"));
         printRuleStats();
     }
@@ -218,6 +241,8 @@ public class Rewriter {
         addDescRules(resourceLines("/rules/memberdescrenames.txt"));
         addSrgRules(resourceLines("/rules/srgmembers.txt"));
         addRetargetRules(resourceLines("/rules/memberretargets.txt"));
+        addUnwrapRules(resourceLinesOptional("/rules/methodunwraps.txt"));
+        addWrapRules(resourceLinesOptional("/rules/methodwraps.txt"));
         addCtorRetargetRules(resourceLines("/rules/ctorretargets.txt"));
         addMethodDrops(resourceLinesOptional("/rules/methoddrops.txt"));
         addSuperSwapRules(resourceLinesOptional("/rules/superswaps.txt"));
@@ -225,6 +250,7 @@ public class Rewriter {
         addInterfaceInventory(resourceLinesOptional("/rules/interfaces-1211.txt"));
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
+        addSharedShims(resourceLinesOptional("/rules/shims-shared.txt"));
         loadShimsFromClasspath("/rules/shims");
         printRuleStats();
     }
@@ -236,12 +262,12 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d unwrap, %d wrap, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims, %d shared%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
-                ctorRetargets.size(), methodDrops.size(), superSwaps.size(), classlist.size(),
+                holderUnwraps.size(), bareWraps.size(), ctorRetargets.size(), methodDrops.size(), superSwaps.size(), classlist.size(),
                 interfaces1211.size(),
-                mojMemberRenames.size(), memberTargets.size(), shims.size());
+                mojMemberRenames.size(), memberTargets.size(), shims.size(), sharedShims.size());
     }
 
     /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
@@ -290,6 +316,17 @@ public class Rewriter {
         shimRoot = "com/modbridge/shim/" + id;
     }
 
+    /** sharedName=ownerModId (rules/shims-shared.txt); validated against the shim
+     *  manifest after it loads */
+    void addSharedShims(List<String> lines) {
+        for (String line : lines) {
+            if (line.startsWith("#")) continue;
+            int eq = line.indexOf('=');
+            if (eq <= 0) throw new IllegalArgumentException("bad shims-shared line: " + line);
+            sharedShims.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+        }
+    }
+
     /** SUPER-SWAP: replaces a class's superclass only when it still equals the
      *  rule's old super (e.g. a subclass of a platform class that became FINAL on
      *  21.1 - the data-driven enchantment rework - retargeted to an inert carrier;
@@ -315,6 +352,13 @@ public class Rewriter {
 
     /** resolves the "@SHIM@/<SimpleName>" placeholder used in typerenames targets */
     String resolveShimTarget(String mapped) {
+        if (mapped != null && mapped.startsWith("@SHIM-SHARED@/")) {
+            String simple = mapped.substring("@SHIM-SHARED@/".length());
+            if (!shimSimpleNames.containsKey(simple)) {
+                throw new IllegalStateException("@SHIM-SHARED@ target " + simple + " is not in the shim manifest");
+            }
+            return "com/modbridge/shim/shared/" + simple;
+        }
         if (mapped != null && mapped.startsWith("@SHIM@/")) {
             String simple = mapped.substring("@SHIM@/".length());
             if (!shimSimpleNames.containsKey(simple)) {
@@ -333,10 +377,21 @@ public class Rewriter {
      *  shims are inert bytecode; classes the jar already defines are never overridden. */
     void injectShims(Map<String, byte[]> entries) {
         if (shims.isEmpty() || shimRoot == null) return;
+        // the owner id this jar's shim package was pinned to (initShimRoot)
+        String currentModId = shimRoot.substring("com/modbridge/shim/".length());
         for (Map.Entry<String, byte[]> e : shims.entrySet()) {
             String original = e.getKey();
             String simple = original.substring(original.lastIndexOf('/') + 1);
-            String relocatedName = shimRoot + "/" + simple;
+            String owner = sharedShims.get(simple);
+            String relocatedName;
+            if (owner != null) {
+                // shared shim: injected ONLY into its owner's jar, at the FIXED
+                // shared package every jar's rules resolve to
+                if (!owner.equals(currentModId)) continue;
+                relocatedName = "com/modbridge/shim/shared/" + simple;
+            } else {
+                relocatedName = shimRoot + "/" + simple;
+            }
             String entryName = relocatedName + ".class";
             if (entries.putIfAbsent(entryName, relocateShimClass(e.getValue(), relocatedName)) == null) {
                 shimsInjected++;
@@ -358,7 +413,10 @@ public class Rewriter {
         Map<String, String> names = new HashMap<>();
         for (String other : shims.keySet()) {
             String otherSimple = other.substring(other.lastIndexOf('/') + 1);
-            names.put(other, shimRoot + "/" + otherSimple);
+            String otherOwner = sharedShims.get(otherSimple);
+            names.put(other, otherOwner != null
+                    ? "com/modbridge/shim/shared/" + otherSimple
+                    : shimRoot + "/" + otherSimple);
         }
         cn.name = target;
         cn.superName = names.getOrDefault(cn.superName, cn.superName);
@@ -521,6 +579,38 @@ public class Rewriter {
             if (key.length != 3 || val.length != 3) throw new IOException("bad memberretarget line: " + line);
             memberRetargets.put(key[0] + "|" + key[1] + "|" + key[2],
                     new String[]{val[0], val[1], val[2]});
+        }
+    }
+
+    /** owner|desc|name -> bare target owner (rules/methodunwraps.txt). Keys are
+     *  FINAL-space (the pass runs after remapClass) and the desc is the ALREADY
+     *  REWRITTEN Holder-returning desc. Optional file - absent = pass disabled. */
+    void addUnwrapRules(List<String> lines) throws IOException {
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad methodunwrap line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            if (key.length != 3 || sides[1].trim().isEmpty()) {
+                throw new IOException("bad methodunwrap line: " + line);
+            }
+            holderUnwraps.put(key[0] + "|" + key[1] + "|" + key[2], sides[1].trim());
+        }
+    }
+
+    /** bareType|holderType -> registryOwner|registryName|registryDesc (rules/
+     *  methodwraps.txt). Keys are FINAL-space. Optional file - absent = pass disabled. */
+    void addWrapRules(List<String> lines) throws IOException {
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad methodwrap line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 2 || val.length != 3) throw new IOException("bad methodwrap line: " + line);
+            bareWraps.put(key[0], new String[]{key[1], val[0], val[1], val[2]});
         }
     }
 
@@ -733,9 +823,9 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, member renames=%d, super swaps=%d%n",
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, holder unwraps=%d, bare wraps=%d, member renames=%d, super swaps=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
-                methodDropsApplied, interfaceRepairsApplied, memberRenamesApplied, superswapsApplied);
+                methodDropsApplied, interfaceRepairsApplied, holderUnwrapsApplied, bareWrapsApplied, memberRenamesApplied, superswapsApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         for (String line : neutralizationLog) {
@@ -797,6 +887,12 @@ public class Rewriter {
         // must run AFTER remapClass: call-site owners are final-space here, matching
         // the interfaces-1211.txt inventory
         repairInterfaceCallSites(cn);
+        // must run AFTER remapClass too: unwrap keys are final-space and the rewritten
+        // (Holder-returning) descs landed in applyMemberRenames
+        repairHolderUnwraps(cn);
+        // inverse repair, same ordering constraints (final-space checkcast + rewritten
+        // Holder-taking target descs)
+        repairBareWraps(cn);
     }
 
     private static boolean isModClass(ClassNode cn) {
@@ -1427,6 +1523,16 @@ public class Rewriter {
                         }
                         after = ctor.getNext();
                         mn.instructions.insert(ctor, factory);
+                        // frames inside the arg region name the uninitialized pair in
+                        // NEW+DUP slots; the rewrite leaves ONE factory reference -
+                        // collapse them exactly like the ctor-retarget pass does. MUST
+                        // run BEFORE removing the window nodes: removed InsnList nodes
+                        // have their links cleared, and walking from a removed node
+                        // silently iterates nothing (first attempt did exactly that).
+                        // (live-boot: StackMapTable "bad offset for Uninitialized" in
+                        // moonlight BlocksColorInternal$ColoredSet.makeHolderSet, whose
+                        // ResourceLocation args contain a branch)
+                        fixArgRegionFrames(mn, dup, ctor, null);
                         mn.instructions.remove(n);
                         mn.instructions.remove(dup);
                         mn.instructions.remove(ctor);
@@ -1520,6 +1626,14 @@ public class Rewriter {
      */
     private static void fixArgRegionFrames(MethodNode mn, AbstractInsnNode from,
                                            AbstractInsnNode to, String receiverTypeDesc) {
+        // frame stack slots carry the INTERNAL name (no L...; delimiters) - strip a
+        // caller-supplied descriptor form defensively (a "L...;" slot would crash the
+        // class with ClassFormatError "Illegal class name", live-boot: the
+        // ResourceLocation rewrite in makeHolderSet)
+        if (receiverTypeDesc != null && receiverTypeDesc.startsWith("L")
+                && receiverTypeDesc.endsWith(";")) {
+            receiverTypeDesc = receiverTypeDesc.substring(1, receiverTypeDesc.length() - 1);
+        }
         for (AbstractInsnNode i = from.getNext(); i != to; ) {
             AbstractInsnNode next = i.getNext();
             if (i instanceof FrameNode fr && fr.stack != null) {
@@ -1527,16 +1641,23 @@ public class Rewriter {
                 boolean replaced = false;
                 for (int k = 0; k < stack.size(); k++) {
                     if (stack.get(k) instanceof LabelNode) {
-                        if (!replaced) {
+                        if (receiverTypeDesc != null && !replaced) {
+                            // receiver-style rewrite (ctor-retarget): the receiver
+                            // GETSTATIC sits exactly where the first uninit slot was
                             stack.set(k, receiverTypeDesc);
                             replaced = true;
                         } else {
+                            // factory-style rewrite (ResourceLocation): the result only
+                            // exists at the ctor position - mid-arg merges carry NO
+                            // placeholder, so every uninit entry drops
+                            // (live-boot VerifyError "Inconsistent stackmap frames",
+                            // replacing-instead-of-dropping left a phantom slot)
                             stack.remove(k);
                             k--;
                         }
                     }
                 }
-                if (replaced) {
+                if (replaced || !stack.equals(fr.stack)) {
                     // FrameNode's count fields are private (ASM 9.x) — rebuild the node
                     FrameNode fixed = new FrameNode(fr.type,
                             fr.local == null ? 0 : fr.local.size(),
@@ -1660,6 +1781,443 @@ public class Rewriter {
             "equals", "hashCode", "toString", "getClass", "clone", "finalize",
             "notify", "notifyAll", "wait");
 
+    /**
+     * Holder-unwrap call-site repair (rules/methodunwraps.txt): a 1.20.1 getter whose
+     * 21.1 return became a Holder (measured: MobEffectInstance.getEffect, the phase
+     * 5.11 effects cascade) flows at SOME call sites into consumers that still expect
+     * the BARE value — a receiver call into a bare-type member, a bare-type
+     * instanceof/checkcast, an areturn of a bare-typed method, a bare-typed putfield,
+     * or the same via a local. Without repair such classes die at LINK time with
+     * VerifyError "Bad type on operand stack: Holder is not assignable to MobEffect"
+     * (measured: supplementaries BambooSpikesBlockTile.interactWithEntity during the
+     * entity registration event). Sites whose consumer was ALREADY migrated to the
+     * Holder shape (the 5.11 desc rewrites: hasEffect/getEffect-arg sites, the
+     * Holder-taking MobEffectInstance ctors) must NOT be unwrapped — the two consumer
+     * families coexist, so the repair is purely consumer-local, pattern by pattern:
+     *
+     *   next insn consumes the value as the bare type (see consumesAsBare) -> unwrap
+     *   next insn = ASTORE n and a later ALOAD n feeds a pattern above -> unwrap
+     *                at the load site (linear pending-slot tracking; any other
+     *                store to the slot clears it)
+     *   otherwise: BOUNDED forward stack scan (measured third shape: the receiver
+     *                sits on the stack while ARGUMENTS are pushed before the consume
+     *                — BambooSpikes applyInstantenousEffect). Walks straight-line
+     *                push-only arg code tracking the slots above the receiver; the
+     *                first insn popping at/below the receiver is the consumer — unwrap
+     *                iff it is a virtual/interface/special call with owner == bare
+     *                type. Anything not understood (branches, DUPs, exotic ops) aborts
+     *                the scan and leaves the site untouched (ladder-measurable).
+     *
+     * The inserted call is INVOKEINTERFACE net/minecraft/core/Holder.value
+     * ()LbareType; — stack-neutral (one ref in, one ref out: maxStack and every
+     * frame stay valid; a frame at the consumer still correctly names the Holder the
+     * ORIGINAL bytecode produced at that point). Runs AFTER remapClass: keys are
+     * final-space and the getEffect descs have already been rewritten to Holder by
+     * the memberdescrenames pass.
+     */
+    void repairHolderUnwraps(ClassNode cn) {
+        if (holderUnwraps.isEmpty()) return;
+        // @SHIM@-owned entries resolve to THIS jar's per-mod path (the pass runs
+        // after remapClass + shim resolution, so the field owners are final-space)
+        Map<String, String> holderFieldUnwraps = new HashMap<>(holderUnwraps);
+        for (Map.Entry<String, String> e : holderUnwraps.entrySet()) {
+            String owner = e.getKey().split("\\|", 2)[0];
+            if (owner.startsWith("@SHIM@/")) {
+                String resolved = resolveShimTarget(owner)
+                        + e.getKey().substring(owner.length());
+                holderFieldUnwraps.putIfAbsent(resolved, e.getValue());
+            }
+        }
+        for (MethodNode mn : cn.methods) {
+            Map<Integer, String> pending = new HashMap<>();
+            // the ASTORE that captures a producer's result must not clear the pending
+            // slot it just armed (the loop reaches it right after the producer)
+            boolean skipNextStore = false;
+            for (AbstractInsnNode n : mn.instructions) {
+                if (n instanceof MethodInsnNode m) {
+                    String target = holderUnwraps.get(m.owner + "|" + m.desc + "|" + m.name);
+                    if (target == null || m.getOpcode() == Opcodes.INVOKESTATIC) continue;
+                    AbstractInsnNode next = m.getNext();
+                    if (next == null) continue;
+                    if (consumesAsBare(next, mn, target)) {
+                        insertUnwrap(mn, m, target);
+                        continue;
+                    }
+                    if (next instanceof VarInsnNode v && v.getOpcode() == Opcodes.ASTORE) {
+                        pending.put(v.var, target);
+                        skipNextStore = true;
+                        continue;
+                    }
+                    unwrapAfterArgPushes(mn, m, next, target);
+                } else if (n instanceof FieldInsnNode fi && fi.getOpcode() == Opcodes.GETSTATIC) {
+                    // FIELD producers (phase 5.12): memberretargets swapped the desc to
+                    // Holder (Potions.*, Attributes.*); where the value flows into a
+                    // LOCAL, the ORIGINAL frames type that local as the BARE type - a
+                    // bare-consumer or a store must see the bare value (measured
+                    // VerifyError: TippedBambooSpikesRecipe.assemble local[3] Holder vs
+                    // Potion). Holder-arg consumers stay untouched (Holder-consistent).
+                    String target = holderFieldUnwraps.get(fi.owner + "|" + fi.desc + "|" + fi.name);
+                    if (target == null) continue;
+                    AbstractInsnNode next = fi.getNext();
+                    if (next == null) continue;
+                    if (consumesAsBare(next, mn, target)) {
+                        insertUnwrap(mn, fi, target);
+                    } else if (next instanceof VarInsnNode v && v.getOpcode() == Opcodes.ASTORE) {
+                        insertUnwrap(mn, fi, target);
+                    } else if (next instanceof JumpInsnNode j
+                            && (j.getOpcode() == Opcodes.IF_ACMPEQ
+                            || j.getOpcode() == Opcodes.IF_ACMPNE)) {
+                        // the 1.20.1 code compared the field value against another
+                        // value by reference - bare-vs-bare is the original semantic
+                        // (measured: TippedBambooSpikesRecipe `potion != Potions.EMPTY`)
+                        insertUnwrap(mn, fi, target);
+                    } else {
+                        unwrapAfterArgPushes(mn, fi, next, target);
+                    }
+                } else if (n instanceof VarInsnNode v) {
+                    if (v.getOpcode() == Opcodes.ASTORE) {
+                        if (skipNextStore) {
+                            skipNextStore = false;
+                        } else {
+                            pending.remove(v.var);
+                        }
+                    } else if (v.getOpcode() == Opcodes.ALOAD) {
+                        String target = pending.get(v.var);
+                        if (target != null && v.getNext() != null && consumesAsBare(v.getNext(), mn, target)) {
+                            insertUnwrap(mn, v, target);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** bounded forward scan from a producer's result sitting on the stack: walk
+     *  straight-line code tracking the slots ABOVE the receiver; the first insn that
+     *  pops at/below the receiver is the consumer. Understood: constant/local loads,
+     *  in-place numeric conversions, void-arg-ish invokes, field loads. Anything
+     *  else (branches, DUPs, stores) aborts with no rewrite. */
+    private void unwrapAfterArgPushes(MethodNode mn, AbstractInsnNode producer,
+                                      AbstractInsnNode from, String target) {
+        int covered = 0; // stack slots sitting above the receiver
+        for (AbstractInsnNode n = from; n != null; n = n.getNext()) {
+            if (n instanceof FrameNode || n instanceof LabelNode || n instanceof LineNumberNode) {
+                if (n instanceof LineNumberNode) continue;
+                return; // branch target boundary: local reasoning is void
+            }
+            int[] pp = stackEffect(n);
+            if (pp == null) return; // unknown shape: abort, never guess
+            int pops = pp[0];
+            int pushes = pp[1];
+            if (pops > covered) {
+                // this insn reaches the receiver (or deeper): it is the consumer
+                if (n instanceof MethodInsnNode cons) {
+                    int op = cons.getOpcode();
+                    if (op == Opcodes.INVOKEVIRTUAL || op == Opcodes.INVOKEINTERFACE
+                            || op == Opcodes.INVOKESPECIAL || op == Opcodes.INVOKESTATIC) {
+                        // receiver consumption OR a landing argument slot the callee
+                        // declares as the BARE type (measured: the retargeted
+                        // Potions.POISON field feeding supp's own
+                        // BambooSpikesTippedItem.makeSpikeItem(Potion) - a mod-owned
+                        // static whose desc was never Holder-migrated)
+                        int idx = landingArgIndex(cons, covered);
+                        boolean receiver = idx < 0 && target.equals(cons.owner);
+                        boolean bareArg = idx >= 0
+                                && Type.getArgumentTypes(cons.desc)[idx].getDescriptor()
+                                        .equals("L" + target + ";");
+                        if (receiver || bareArg) {
+                            insertUnwrap(mn, producer, target);
+                        }
+                    }
+                }
+                return;
+            }
+            covered += pushes - pops;
+        }
+    }
+
+    /** [pops, pushes] for the arg-push shapes this walker understands; null = abort */
+    private static int[] stackEffect(AbstractInsnNode n) {
+        if (n instanceof VarInsnNode v) {
+            return switch (v.getOpcode()) {
+                case Opcodes.ALOAD, Opcodes.ILOAD, Opcodes.FLOAD -> new int[]{0, 1};
+                case Opcodes.LLOAD, Opcodes.DLOAD -> new int[]{0, 2};
+                case Opcodes.ASTORE, Opcodes.ISTORE, Opcodes.FSTORE -> new int[]{1, 0};
+                case Opcodes.LSTORE, Opcodes.DSTORE -> new int[]{2, 0};
+                case Opcodes.IINC -> new int[]{0, 0}; // local-only
+                default -> null;
+            };
+        }
+        if (n instanceof FieldInsnNode fi) {
+            int size = org.objectweb.asm.Type.getType(fi.desc).getSize();
+            return switch (fi.getOpcode()) {
+                case Opcodes.GETSTATIC -> new int[]{0, size};
+                case Opcodes.GETFIELD -> new int[]{1, size};
+                case Opcodes.PUTSTATIC -> new int[]{size, 0};
+                case Opcodes.PUTFIELD -> new int[]{1 + size, 0};
+                default -> null;
+            };
+        }
+        if (n instanceof MethodInsnNode mi) {
+            // getArgumentsAndReturnSizes ALREADY counts the implicit receiver slot:
+            // (Largs...)V on a virtual call returns argsSize+1 in the high bits
+            int sizes = org.objectweb.asm.Type.getArgumentsAndReturnSizes(mi.desc);
+            int pushes = sizes & 3;
+            int pops = (sizes >> 2) - (mi.getOpcode() == Opcodes.INVOKESTATIC ? 1 : 0);
+            return new int[]{pops, pushes};
+        }
+        if (n instanceof InvokeDynamicInsnNode id) {
+            int sizes = org.objectweb.asm.Type.getArgumentsAndReturnSizes(id.desc);
+            return new int[]{sizes >> 2, sizes & 3};
+        }
+        if (n instanceof LdcInsnNode l) {
+            if (l.cst instanceof Long || l.cst instanceof Double) return new int[]{0, 2};
+            return new int[]{0, 1};
+        }
+        if (n instanceof TypeInsnNode t) {
+            return switch (t.getOpcode()) {
+                case Opcodes.CHECKCAST -> new int[]{0, 0};
+                case Opcodes.INSTANCEOF -> new int[]{1, 1};
+                case Opcodes.NEW -> new int[]{0, 1};
+                default -> null;
+            };
+        }
+        if (n instanceof IntInsnNode ii) {
+            // BIPUSH/SIPUSH int constants; NEWARRAY pops the count, pushes the array
+            return switch (ii.getOpcode()) {
+                case Opcodes.BIPUSH, Opcodes.SIPUSH -> new int[]{0, 1};
+                case Opcodes.NEWARRAY -> new int[]{1, 1};
+                default -> null;
+            };
+        }
+        if (n instanceof JumpInsnNode j) {
+            // conditional jumps fall through (the walk follows the fall-through path);
+            // GOTO/JSR/switch hand control elsewhere - abort
+            return switch (j.getOpcode()) {
+                case Opcodes.IFEQ, Opcodes.IFNE, Opcodes.IFLT, Opcodes.IFGE,
+                     Opcodes.IFGT, Opcodes.IFLE, Opcodes.IFNULL, Opcodes.IFNONNULL -> new int[]{1, 0};
+                case Opcodes.IF_ICMPEQ, Opcodes.IF_ICMPNE, Opcodes.IF_ICMPLT, Opcodes.IF_ICMPGE,
+                     Opcodes.IF_ICMPGT, Opcodes.IF_ICMPLE, Opcodes.IF_ACMPEQ, Opcodes.IF_ACMPNE -> new int[]{2, 0};
+                default -> null;
+            };
+        }
+        if (n instanceof InsnNode i) {
+            return switch (i.getOpcode()) {
+                case Opcodes.ACONST_NULL, Opcodes.ICONST_M1, Opcodes.ICONST_0, Opcodes.ICONST_1,
+                     Opcodes.ICONST_2, Opcodes.ICONST_3, Opcodes.ICONST_4, Opcodes.ICONST_5,
+                     Opcodes.FCONST_0, Opcodes.FCONST_1, Opcodes.FCONST_2 -> new int[]{0, 1};
+                case Opcodes.LCONST_0, Opcodes.LCONST_1, Opcodes.DCONST_0, Opcodes.DCONST_1 -> new int[]{0, 2};
+                // slot-neutral conversions
+                case Opcodes.I2B, Opcodes.I2C, Opcodes.I2S, Opcodes.I2F, Opcodes.L2I, Opcodes.F2I,
+                     Opcodes.D2I, Opcodes.L2F, Opcodes.D2F, Opcodes.D2L, Opcodes.L2D -> new int[]{0, 0};
+                // widening conversions (one extra slot)
+                case Opcodes.I2L, Opcodes.I2D, Opcodes.F2D, Opcodes.F2L -> new int[]{0, 1};
+                // DUP (the NEW+DUP ctor idiom among args duplicates the uninit ref)
+                case Opcodes.DUP -> new int[]{0, 1};
+                // int/float arithmetic: pops 2, pushes 1
+                case Opcodes.IADD, Opcodes.ISUB, Opcodes.IMUL, Opcodes.IDIV, Opcodes.IREM,
+                     Opcodes.IAND, Opcodes.IOR, Opcodes.IXOR, Opcodes.ISHL, Opcodes.ISHR,
+                     Opcodes.IUSHR, Opcodes.FADD, Opcodes.FSUB, Opcodes.FMUL, Opcodes.FDIV,
+                     Opcodes.FREM, Opcodes.LCMP, Opcodes.FCMPL, Opcodes.FCMPG,
+                     Opcodes.DCMPL, Opcodes.DCMPG -> new int[]{2, 1};
+                // long/double arithmetic: pops 4, pushes 2
+                case Opcodes.LADD, Opcodes.LSUB, Opcodes.LMUL, Opcodes.LDIV, Opcodes.LREM,
+                     Opcodes.LSHL, Opcodes.LSHR, Opcodes.LUSHR,
+                     Opcodes.DADD, Opcodes.DSUB, Opcodes.DMUL, Opcodes.DDIV, Opcodes.DREM -> new int[]{4, 2};
+                // negation: in-place
+                case Opcodes.INEG, Opcodes.FNEG, Opcodes.LNEG, Opcodes.DNEG -> new int[]{0, 0};
+                default -> null; // DUP2/X-forms, SWAP, returns, other control flow: abort
+            };
+        }
+        return null;
+    }
+
+    /** does this instruction consume the tos value as the BARE type (the unwrap
+     *  patterns above)? Arg-position consumption is deliberately not covered: those
+     *  consumers are already migrated to the Holder shape by the desc rewrites. */
+    private static boolean consumesAsBare(AbstractInsnNode n, MethodNode mn, String target) {
+        if (n instanceof MethodInsnNode m) {
+            int op = m.getOpcode();
+            return (op == Opcodes.INVOKEVIRTUAL || op == Opcodes.INVOKEINTERFACE
+                    || op == Opcodes.INVOKESPECIAL) && target.equals(m.owner);
+        }
+        if (n instanceof TypeInsnNode t) {
+            int op = t.getOpcode();
+            return (op == Opcodes.INSTANCEOF || op == Opcodes.CHECKCAST) && target.equals(t.desc);
+        }
+        if (n instanceof InsnNode i && i.getOpcode() == Opcodes.ARETURN) {
+            return Type.getReturnType(mn.desc).getDescriptor().equals("L" + target + ";");
+        }
+        if (n instanceof FieldInsnNode f && f.getOpcode() == Opcodes.PUTFIELD) {
+            return f.desc.equals("L" + target + ";");
+        }
+        return false;
+    }
+
+    /** index of the desc argument the value lands in when `coveredSlots` slots sit
+     *  above it on the stack at the invoke (walking the arg list from the top, so
+     *  long/double args count double); -1 = the value is the RECEIVER. */
+    private static int landingArgIndex(MethodInsnNode m, int coveredSlots) {
+        Type[] args = Type.getArgumentTypes(m.desc);
+        int fromTop = coveredSlots;
+        for (int i = args.length - 1; i >= 0; i--) {
+            int size = args[i].getSize();
+            if (fromTop < size) return i;
+            fromTop -= size;
+        }
+        return -1;
+    }
+
+    /**
+     * The INVERSE of repairHolderUnwraps (rules/methodwraps.txt): the translated
+     * wrapper-get family pushes the BARE registry VALUE (EntryWrapperCompat.get ->
+     * checkcast MobEffect) into call sites whose target methods the 5.11 desc
+     * rewrites migrated to Holder<MobEffect> args — vanilla's MobEffectInstance
+     * ctor then calls Holder.value() on the bare instance at RUNTIME
+     * ("IncompatibleClassChangeError: FlammableEffect does not implement the
+     * requested interface net.minecraft.core.Holder", measured inside the fluid
+     * RegisterEvent dispatch). Where a bare-typed value lands in a Holder-typed
+     * argument slot, insert the 21.1-native bridge:
+     *
+     *   getstatic BuiltInRegistries.MOB_EFFECT; SWAP;
+     *   invokeinterface Registry.wrapAsHolder(Object)Holder
+     *
+     * (stack: one ref in, one ref out; maxStack bumped once for the transient
+     * registry pair). Consumer-local like the unwrap pass: the consumer must be a
+     * virtual/interface/special call whose landing argument slot (computed from the
+     * slots stacked above the value, long/double-aware) is Holder-typed; producers
+     * whose consumer takes the BARE type (ml Utils.getID duck-typing) or is a static
+     * call (supp QuarkCompat Set.of) are left untouched. Branch boundaries abort the
+     * scan — a rewrite never crosses a frame, so the original StackMapTable (which
+     * names the value MobEffect at such boundaries) stays valid. Runs AFTER
+     * remapClass: checkcast descs and rewritten target descs are final-space.
+     */
+    void repairBareWraps(ClassNode cn) {
+        if (bareWraps.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            Map<Integer, String[]> pending = new HashMap<>();
+            boolean skipNextStore = false;
+            for (AbstractInsnNode n : mn.instructions) {
+                if (n instanceof TypeInsnNode t && t.getOpcode() == Opcodes.CHECKCAST) {
+                    String[] rule = bareWraps.get(t.desc);
+                    if (rule == null) continue;
+                    AbstractInsnNode next = t.getNext();
+                    if (next == null) continue;
+                    if (consumesHolderArg(next, rule, 0)) {
+                        insertWrap(mn, t, rule);
+                        continue;
+                    }
+                    if (next instanceof VarInsnNode v && v.getOpcode() == Opcodes.ASTORE) {
+                        pending.put(v.var, rule);
+                        skipNextStore = true;
+                        continue;
+                    }
+                    wrapAfterArgPushes(mn, t, next, rule, pending);
+                } else if (n instanceof VarInsnNode v) {
+                    if (v.getOpcode() == Opcodes.ASTORE) {
+                        if (skipNextStore) {
+                            skipNextStore = false;
+                        } else {
+                            pending.remove(v.var);
+                        }
+                    } else if (v.getOpcode() == Opcodes.ALOAD) {
+                        String[] rule = pending.get(v.var);
+                        if (rule != null && v.getNext() != null) {
+                            if (consumesHolderArg(v.getNext(), rule, 0)) {
+                                insertWrap(mn, v, rule);
+                            } else {
+                                wrapAfterArgPushes(mn, v, v.getNext(), rule, pending);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** immediate consumer test: a virtual-family invoke whose landing argument slot
+     *  is Holder-typed */
+    private static boolean consumesHolderArg(AbstractInsnNode n, String[] rule, int covered) {
+        if (!(n instanceof MethodInsnNode m)) return false;
+        int op = m.getOpcode();
+        if (op != Opcodes.INVOKEVIRTUAL && op != Opcodes.INVOKEINTERFACE
+                && op != Opcodes.INVOKESPECIAL) return false;
+        int idx = landingArgIndex(m, covered);
+        return idx >= 0 && args(m)[idx].getDescriptor().equals("L" + rule[0] + ";");
+    }
+
+    private static Type[] args(MethodInsnNode m) {
+        return Type.getArgumentTypes(m.desc);
+    }
+
+    /** bounded forward scan (same shapes as unwrapAfterArgPushes) for the wrap side.
+     *  pendingLocals: slots holding a pending bare value — an ALOAD of such a slot
+     *  pushes a NEW candidate (measured: BombEntity stores the effect, null-checks,
+     *  reloads it as a ctor arg): recurse for the reloaded value, and keep the outer
+     *  walk alive (the outer value sits below). */
+    private void wrapAfterArgPushes(MethodNode mn, AbstractInsnNode producer,
+                                    AbstractInsnNode from, String[] rule,
+                                    Map<Integer, String[]> pendingLocals) {
+        int covered = 0;
+        for (AbstractInsnNode n = from; n != null; n = n.getNext()) {
+            if (n instanceof FrameNode || n instanceof LabelNode) return;
+            if (n instanceof LineNumberNode) continue;
+            if (n instanceof VarInsnNode pv && pv.getOpcode() == Opcodes.ALOAD
+                    && pendingLocals.containsKey(pv.var)) {
+                // the reloaded candidate: recurse (its own consumer analysis), then
+                // keep walking — for the OUTER value this load is just a push
+                if (pv.getNext() != null) {
+                    wrapAfterArgPushes(mn, pv, pv.getNext(), rule, Map.of());
+                }
+                covered += 1;
+                continue;
+            }
+            int[] pp = stackEffect(n);
+            if (pp == null) return;
+            int pops = pp[0];
+            int pushes = pp[1];
+            if (pops > covered) {
+                if (n instanceof MethodInsnNode cons
+                        && (cons.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        || cons.getOpcode() == Opcodes.INVOKEINTERFACE
+                        || cons.getOpcode() == Opcodes.INVOKESPECIAL)) {
+                    int idx = landingArgIndex(cons, covered);
+                    if (idx >= 0 && args(cons)[idx].getDescriptor().equals("L" + rule[0] + ";")) {
+                        insertWrap(mn, producer, rule);
+                    }
+                }
+                return;
+            }
+            covered += pushes - pops;
+        }
+    }
+
+    /** inserts getstatic registry + SWAP + Registry.wrapAsHolder after the producer
+     *  (one ref in, one ref out; the transient registry pair costs one maxStack slot) */
+    private void insertWrap(MethodNode mn, AbstractInsnNode after, String[] rule) {
+        mn.instructions.insert(after, new MethodInsnNode(Opcodes.INVOKEINTERFACE,
+                "net/minecraft/core/Registry", "wrapAsHolder",
+                "(Ljava/lang/Object;)Lnet/minecraft/core/Holder;", true));
+        mn.instructions.insert(after, new InsnNode(Opcodes.SWAP));
+        mn.instructions.insert(after, new FieldInsnNode(Opcodes.GETSTATIC,
+                rule[1], rule[2], rule[3]));
+        mn.maxStack++;
+        bareWrapsApplied++;
+    }
+
+    /** inserts Holder.value() + a bare-type CHECKCAST right after the producer
+     *  (stack-neutral, frames valid). The call desc must be the ERASED ()Object:
+     *  Holder.value is a generic interface method whose only declared descriptor is
+     *  the erased one - a specialized ()Ltarget; desc NSMEs at the call
+     *  (live-boot: "NoSuchMethodError: MobEffect net.minecraft.core.Holder.value()").
+     *  The checkcast re-establishes the bare type for the consumer. */
+    private void insertUnwrap(MethodNode mn, AbstractInsnNode after, String target) {
+        mn.instructions.insert(after, new TypeInsnNode(Opcodes.CHECKCAST, target));
+        mn.instructions.insert(after, new MethodInsnNode(Opcodes.INVOKEINTERFACE,
+                "net/minecraft/core/Holder", "value", "()Ljava/lang/Object;", true));
+        holderUnwrapsApplied++;
+    }
+
     void applyMemberRenames(ClassNode cn) {
         // SRG declarations: production 1.20.1 mods override vanilla members by SRG id
         // (m_5744_, f_91074_ ...) because the jar ships in SRG member space. Call sites
@@ -1687,7 +2245,7 @@ public class Rewriter {
                     m.name = mapSrg(m.name);
                     String renamed = memberRenames.get(m.owner + "|" + m.desc + "|" + m.name);
                     if (renamed != null) { m.name = renamed; memberRenamesApplied++; }
-                    String[] retarget = memberRetargets.get(m.owner + "|" + m.desc + "|" + m.name);
+                    String[] retarget = retargetFor(m.owner, m.desc, m.name);
                     if (retarget != null) {
                         m.owner = resolveShimTarget(retarget[0]);
                         m.desc = retarget[1];
@@ -1711,8 +2269,13 @@ public class Rewriter {
                     if (renamed != null) { f.name = renamed; memberRenamesApplied++; }
                     // field retargets (phase 5.10 registry lane): owner+desc swap
                     // plus the NEW NAME from the third value slot (fields have no
-                    // dispatch kind - getstatic/putstatic opcode kept, no itf bit)
+                    // dispatch kind - getstatic/putstatic opcode kept, no itf bit).
+                    // "*" owner fallback (phase 5.12): javac emits the SUBCLASS as
+                    // owner for inherited statics (WrenchItem.BASE_ATTACK_DAMAGE_UUID)
                     String[] fRetarget = memberRetargets.get(f.owner + "|" + f.desc + "|" + f.name);
+                    if (fRetarget == null) {
+                        fRetarget = memberRetargets.get("*|" + f.desc + "|" + f.name);
+                    }
                     if (fRetarget != null) {
                         f.owner = resolveShimTarget(fRetarget[0]);
                         f.desc = fRetarget[1];
@@ -1893,6 +2456,19 @@ public class Rewriter {
         }
     }
 
+    /** exact owner first, then the "*" owner fallback (phase 5.12): javac emits the
+     *  RECEIVER'S STATIC TYPE as a call-site owner, so an inherited vanilla method
+     *  called on a SUBCLASS receiver carries that subclass as the owner (measured:
+     *  OverencumberedEffect.<init> calling the MobEffect addAttributeModifier it
+     *  inherits - same reason applyDescRewrite grew its "*" fallback in 5.11). Rules
+     *  opt in by naming "*" as the owner; write * rules ONLY for (name,desc) pairs
+     *  no mod class plausibly owns. */
+    private String[] retargetFor(String owner, String desc, String name) {
+        String[] exact = memberRetargets.get(owner + "|" + desc + "|" + name);
+        if (exact != null) return exact;
+        return memberRetargets.get("*|" + desc + "|" + name);
+    }
+
     /** ASM Handle fields are private, so remapping produces a new Handle. */
     private Handle remapHandle(Handle h) {
         return new Handle(h.getTag(), remapType(h.getOwner()), mapSrg(h.getName()), remapDesc(h.getDesc()), h.isInterface());
@@ -1911,7 +2487,7 @@ public class Rewriter {
                 && h.getTag() != Opcodes.H_INVOKEINTERFACE && h.getTag() != Opcodes.H_INVOKESPECIAL) {
             return h;
         }
-        String[] retarget = memberRetargets.get(h.getOwner() + "|" + h.getDesc() + "|" + h.getName());
+        String[] retarget = retargetFor(h.getOwner(), h.getDesc(), h.getName());
         if (retarget != null) {
             return new Handle(Opcodes.H_INVOKESTATIC, resolveShimTarget(retarget[0]),
                     h.getName(), retarget[1], false);

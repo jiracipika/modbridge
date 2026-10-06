@@ -30,14 +30,62 @@ public final class RegistryCompat {
      *  duplicate-override nor the direct-register semantics are claimed: entries
      *  registered ONLY through this path (mod-compat overrides) are inert. */
     public static void register(Registry<Object> registry, ResourceLocation id, Object value) {
+        // pre-check the duplicate BEFORE calling Registry.register: on 21.1 the value
+        // is already registered AND its intrusive holder (created at construction -
+        // vanilla Item.<init> calls createIntrusiveHolder on itself) must not stay
+        // orphaned. GameData's end-of-registration freeze fails the whole boot on any
+        // unbound intrusive holder ("Some intrusive holders were not registered",
+        // live-boot). The 1.20.1 override semantics are unchanged: the existing entry
+        // stays, the override is not claimed (measured: supp's minecraft:shulker_shell
+        // helmet override, constructed inline in its RegisterEvent handler).
+        if (registry.get(id) != null) {
+            forgetIntrusiveHolder(registry, value, id);
+            if (!warned) {
+                warned = true;
+                System.out.println("[ModBridge shim] registry register kept existing entry: " + id);
+            }
+            return;
+        }
         try {
             Registry.register(registry, id, value);
         } catch (RuntimeException duplicate) {
+            forgetIntrusiveHolder(registry, value, id);
             if (!warned) {
                 warned = true;
                 System.out.println("[ModBridge shim] registry register kept existing entry: "
                         + id + " (" + duplicate.getMessage() + ")");
             }
+        }
+    }
+
+    /** drops the value from the registry's private unregisteredIntrusiveHolders map
+     *  (MappedRegistry, mojmap-named field, non-null only for intrusive-holder
+     *  registries): the constructed-but-skipped value would otherwise fail the
+     *  registration freeze. Reflective + fail-soft; on any shape drift the freeze
+     *  failure resurfaces loudly (never silently wrong). */
+    private static void forgetIntrusiveHolder(Registry<Object> registry, Object value, ResourceLocation id) {
+        try {
+            java.lang.reflect.Field f = null;
+            for (Class<?> c = registry.getClass(); c != null && f == null; c = c.getSuperclass()) {
+                try {
+                    f = c.getDeclaredField("unregisteredIntrusiveHolders");
+                } catch (NoSuchFieldException ignoredField) {
+                    // walk up: the field lives on MappedRegistry, instances are
+                    // DefaultedMappedRegistry (live-boot)
+                }
+            }
+            if (f == null) return;
+            f.setAccessible(true);
+            Object map = f.get(registry);
+            if (map instanceof java.util.Map<?, ?> m) {
+                Object before = m.remove(value);
+                System.out.println("[ModBridge DBG] forgetIntrusiveHolder id=" + id
+                        + " removed=" + (before != null) + " remaining=" + m.size());
+            } else {
+                System.out.println("[ModBridge DBG] forgetIntrusiveHolder id=" + id + " map=null");
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            System.out.println("[ModBridge DBG] forget failed: " + e);
         }
     }
 }

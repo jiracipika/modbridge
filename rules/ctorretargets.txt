@@ -38,3 +38,11 @@
 # both platforms), STARTUP is already eager-opened inside registerConfig, SERVER
 # stays on FML's lifecycle.
 net/minecraftforge/fml/config/ModConfig|(Lnet/minecraftforge/fml/config/ModConfig$Type;Lnet/minecraftforge/fml/config/IConfigSpec;Lnet/minecraftforge/fml/ModContainer;Ljava/lang/String;)V -> @SHIM@/ModConfigBridge|INSTANCE|registerAndLoad|(Lnet/neoforged/fml/config/ModConfig$Type;Lnet/neoforged/fml/config/IConfigSpec;Lnet/neoforged/fml/ModContainer;Ljava/lang/String;)Lnet/neoforged/fml/config/ModConfig;
+
+# --- phase 5.12: the 1.20.1 AttributeModifier(UUID, String, double, Operation)
+# ctor is gone on 21.1 (modifiers keyed by a single ResourceLocation). Ctor-retarget
+# to the per-mod shim factory, which derives the key from the name. Measured site:
+# supp WrenchItem's clinit-built default-attribute map (dead data on the 21.1
+# runtime - its consumer override is never dispatched - but the clinit executes at
+# item registration and the NSME kills the event).
+net/minecraft/world/entity/ai/attributes/AttributeModifier|(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)V -> @SHIM@/AttributeModifierCompat|INSTANCE|create|(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/entity/ai/attributes/AttributeModifier;

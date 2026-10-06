@@ -36,3 +36,22 @@ net/minecraft/world/level/block/state/BlockBehaviour$Properties|()Lnet/minecraft
 net/minecraft/world/food/FoodProperties$Builder|(F)Lnet/minecraft/world/food/FoodProperties$Builder;|saturationMod=saturationModifier
 # --- phase 5.11: FoodProperties$Builder.alwaysEat renamed alwaysEdible on 1.20.5+.
 net/minecraft/world/food/FoodProperties$Builder|()Lnet/minecraft/world/food/FoodProperties$Builder;|alwaysEat=alwaysEdible
+# --- attributes lane (phase 5.12): the AttributeModifier$Operation enum constants
+# were RENAMED on 21.1 (1.20.1 ADDITION/MULTIPLY_BASE/MULTIPLY_TOTAL ->
+# ADD_VALUE/ADD_MULTIPLIED_BASE/ADD_MULTIPLIED_TOTAL). Enum constants are static
+# fields, so the getstatic sites need field renames. Measured: MULTIPLY_TOTAL in
+# supp OverencumberedEffect.<init> (the mob_effect boot wall - same ctor as the
+# addAttributeModifier shim) and moonlight (1 site), ADDITION x2 in supp WrenchItem.
+# MULTIPLY_BASE deliberately unmapped: no census hit in the trial jars.
+net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation|Lnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;|MULTIPLY_TOTAL=ADD_MULTIPLIED_TOTAL
+net/minecraft/world/entity/ai/attributes/AttributeModifier$Operation|Lnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;|ADDITION=ADD_VALUE
+# --- phase 5.12: 1.20.1 mojmap Item$Properties.defaultDurability was renamed
+# durability on 1.20.5+ (vanilla absorbed the forge-era split; the SRG table
+# m_41499_ carries the STALE 1.20.1 mojmap name, so call sites land on the old
+# name - live-boot NSME at supp ModRegistry.lambda$static$10 during item
+# registration). Same owner-independent shape family as the 5.11 Builder renames.
+net/minecraft/world/item/Item$Properties|(I)Lnet/minecraft/world/item/Item$Properties;|defaultDurability=durability
+# --- phase 5.12: ExtraCodecs.stringResolverCodec moved to DFU 8's Codec as
+# stringResolver (the 5.9 vanilla-class renames never covered DFU-internal moves;
+# the SRG table maps m_184405_ to the stale 1.20.1 mojmap name).
+net/minecraft/util/ExtraCodecs|(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;|stringResolverCodec=stringResolver

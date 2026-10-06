@@ -19,13 +19,25 @@ import net.minecraft.world.item.Item;
 public class RecordItem extends Item {
 
     private final int comparatorValue;
-    private final SoundEvent sound;
+    private SoundEvent sound;
+    private java.util.function.Supplier<SoundEvent> soundSupplier;
 
     public RecordItem(int comparatorValue, SoundEvent sound, Item.Properties properties,
             int useDuration) {
         super(properties);
         this.comparatorValue = comparatorValue;
         this.sound = sound;
+    }
+
+    /** the moonlight newMusicDisc shape (PlatHelperImpl passes the disc sound as a
+     *  SUPPLIER - the 1.20.1 vanilla RecordItem ctor took Supplier<SoundEvent>);
+     *  resolved lazily: sound events register before items, but the supplier may be
+     *  a registration wrapper */
+    public RecordItem(int comparatorValue, java.util.function.Supplier<SoundEvent> sound,
+            Item.Properties properties, int useDuration) {
+        super(properties);
+        this.comparatorValue = comparatorValue;
+        this.soundSupplier = sound;
     }
 
     /** 1.20.1 RecordItem surface (m_6422_-family accessor), inert on 21.1. */
@@ -35,6 +47,6 @@ public class RecordItem extends Item {
 
     /** 1.20.1 RecordItem surface, inert on 21.1. */
     public SoundEvent getSound() {
-        return sound;
+        return sound != null ? sound : (soundSupplier != null ? soundSupplier.get() : null);
     }
 }

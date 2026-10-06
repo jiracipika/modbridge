@@ -63,6 +63,7 @@ public final class ShimFacadeTest {
         criteriaShimExactness();
         dataResultShimExactness();
         networkShimExactness();
+        effectsLaneShimExactness();
         rulesAndInjection();
         rulesAndInjection();
     }
@@ -649,6 +650,50 @@ public final class ShimFacadeTest {
 
     // ------------------------------------------------------- rules-level + injection
 
+    /** phase 5.12 (effects/attributes lane): the mob_effect RegisterEvent wall.
+     *  Byte-level only: constructing a MobEffect triggers the vanilla static-init
+     *  cascade (Registries -> ResourceLocation -> netty) that only exists in a full
+     *  server env - the same reason criteriaShimExactness stays reflective. */
+    void effectsLaneShimExactness() throws Exception {
+        Class<?> mec = Class.forName("com.modbridge.shim.MobEffectCompat");
+        java.lang.reflect.Method aam = mec.getMethod("addAttributeModifier",
+                net.minecraft.world.effect.MobEffect.class,
+                net.minecraft.core.Holder.class,
+                String.class, double.class,
+                net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.class);
+        check(aam.getReturnType() == net.minecraft.world.effect.MobEffect.class,
+                "MobEffectCompat.addAttributeModifier: 1.20.1 return shape (receiver-prepended, static)");
+        check(java.lang.reflect.Modifier.isStatic(aam.getModifiers())
+                        && java.lang.reflect.Modifier.isFinal(mec.getModifiers()),
+                "MobEffectCompat: static utility");
+        byte[] code = classBytes("com/modbridge/shim/MobEffectCompat.class");
+        check(containsText(code, "fromNamespaceAndPath") && containsText(code, "toLowerCase"),
+                "MobEffectCompat body: converts the uuid String to a path-legal modbridge ResourceLocation key");
+        check(containsText(code, "addAttributeModifier"),
+                "MobEffectCompat body: forwards onto the real 21.1 (Holder, ResourceLocation, ...) surface");
+
+        Class<?> brc = Class.forName("com.modbridge.shim.BlockReachCompat");
+        java.lang.reflect.Method grd = brc.getMethod("getReachDistance", net.minecraft.world.entity.LivingEntity.class);
+        check(grd.getReturnType() == double.class,
+                "BlockReachCompat.getReachDistance: (LivingEntity)D forward surface");
+        byte[] rcode = classBytes("com/modbridge/shim/BlockReachCompat.class");
+        check(containsText(rcode, "Attributes") && containsText(rcode, "BLOCK_INTERACTION_RANGE"),
+                "BlockReachCompat body: forwards onto Attributes.BLOCK_INTERACTION_RANGE (the vanilla-absorbed reach attribute)");
+        check(containsText(rcode, "getAttributeValue"),
+                "BlockReachCompat body: calls getAttributeValue");
+    }
+
+    static byte[] classBytes(String name) throws Exception {
+        try (var in = ShimFacadeTest.class.getClassLoader().getResourceAsStream(name)) {
+            return in.readAllBytes();
+        }
+    }
+
+    static boolean containsText(byte[] bytes, String needle) {
+        String s = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        return s.contains(needle);
+    }
+
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
@@ -754,9 +799,11 @@ public final class ShimFacadeTest {
         check(r.remapType("net/minecraftforge/common/crafting/AbstractIngredient")
                         .equals("com/modbridge/shim/testmod/AbstractIngredient"),
                 "rules: AbstractIngredient -> carrier shim");
+        // phase 5.12: RecordItem became a SHARED shim (@SHIM-SHARED@ resolves to the
+        // fixed com/modbridge/shim/shared package in every jar; owner: moonlight)
         check(r.remapType("net/minecraft/world/item/RecordItem")
-                        .equals("com/modbridge/shim/testmod/RecordItem"),
-                "rules: RecordItem -> Item-extending shim");
+                        .equals("com/modbridge/shim/shared/RecordItem"),
+                "rules: RecordItem -> the SHARED Item-extending shim");
         check(r.remapType("net/minecraftforge/common/crafting/IIngredientSerializer")
                         .equals("com/modbridge/shim/testmod/IIngredientSerializer"),
                 "rules: IIngredientSerializer -> interface shim");

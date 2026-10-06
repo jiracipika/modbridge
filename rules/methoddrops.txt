@@ -34,3 +34,21 @@ net/mehvahdjukaar/supplementaries/common/entities/dispenser_minecart/DispenserMi
 # interface never lands on them and getBehavior()'s bare CHECKCAST CCEs. The whole
 # surface is mixin-injected RUNTIME (unclaimed); drop the boot-time hook.
 net/mehvahdjukaar/moonlight/api/item/additional_placements/AdditionalItemPlacementsAPI|()V|afterItemReg
+# moonlight ForgeHelperImpl.getReachDistance body: reads the removed
+# ForgeMod.BLOCK_REACH RegistryObject + LivingEntity.getAttribute(Attribute) - both
+# phantom on 21.1, and the desc rewrite for getAttribute would leave THIS orphaned
+# body unverifiable (stack would carry the bare Attribute the desc-rewritten call
+# cannot take). All call sites are retargeted to the BlockReachCompat shim
+# (memberretargets.txt), so the body is dead; drop it to a typed 0.0 default.
+net/mehvahdjukaar/moonlight/api/platform/forge/ForgeHelperImpl|(Lnet/minecraft/world/entity/LivingEntity;)D|getReachDistance
+# moonlight RegHelper.registerChickenFood: mutates the vanilla Chicken.FOOD_ITEMS
+# static Ingredient - a field 1.21 removed entirely (animal foods moved to data
+# components; only isFood(ItemStack) remains). Live-boot NSFE at supp
+# ModSetup.registerMobFoods during CommonSetup. The mutation semantics (chickens
+# eat the extra foods) are unclaimed on the translated runtime - documented no-op,
+# same treatment as the inert capability/attach events.
+net/mehvahdjukaar/moonlight/api/platform/RegHelper|([Lnet/minecraft/world/level/ItemLike;)V|registerChickenFood
+# --- same removed-static-food family (phase 5.12, live-boot ladder): AbstractHorse
+# and Parrot lost their FOOD_ITEMS statics with the same 1.21 data-component move.
+net/mehvahdjukaar/moonlight/api/platform/RegHelper|([Lnet/minecraft/world/level/ItemLike;)V|registerHorseFood
+net/mehvahdjukaar/moonlight/api/platform/RegHelper|([Lnet/minecraft/world/level/ItemLike;)V|registerParrotFood

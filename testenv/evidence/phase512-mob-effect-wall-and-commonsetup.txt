@@ -1,0 +1,132 @@
+# phase 5.12 — the mob_effect registry wall falls; the ladder reaches CommonSetup (2026-10-06, afternoon)
+
+Matrix 16/16 at close (matrix-run-phase512.txt). All 4 unit gates green
+(ctor-retarget 253 checks, shims 239/3, refmap 3/3, srg-resolver 4/4).
+
+## THE DOCUMENTED 5.11 WALL — diagnosis corrected, then fallen
+
+The 5.11 close framed the wall as "moonlight's lazy DeferredRegister creation vs
+21.1 registry event order". GROUND TRUTH (this slice): the mob_effect
+DeferredRegister IS created during construction (ModRegistry.<clinit> ->
+RegHelper.registerEffect -> RegHelperImpl.register -> computeIfAbsent ->
+DeferredRegister.create + register(bus) - read off the raw bytecode). The REAL
+failure was INSIDE the mob_effect RegisterEvent dispatch itself:
+
+  1. DeferredRegister.addEntries ran the effect suppliers; entry 1
+     (supplementaries:overencumbered) constructed OverencumberedEffect, whose ctor
+     calls the 21.1-removed MobEffect.addAttributeModifier(Attribute, String uuid,
+     double, Operation) -> NSFE ("Attributes does not have member field 'Attribute
+     MOVEMENT_SPEED'" desc drift + the removed ctor) -> the addEntries loop ABORTED
+     -> entry 2 (supplementaries:flammable) NEVER REGISTERED.
+  2. The 5.11-documented "registry value not present: mob_effect/
+     supplementaries:flammable" was the downstream symptom: supp's fluid-item
+     supplier (ModFluids.lambda$static$2) queried the flammable wrapper during the
+     ITEM event and the EntryWrapperCompat lookup correctly found nothing.
+
+THE FIX (no registry-lane change at all - moonlight's constructs untouched):
+- rules: 4x Attributes field desc retargets (Attribute -> Holder; MOVEMENT_SPEED
+  was the boot wall, FOLLOW_RANGE/ATTACK_DAMAGE/ATTACK_SPEED census-complete),
+  "*"-owner memberretarget for MobEffect.addAttributeModifier -> the new
+  MobEffectCompat shim (uuid String -> "modbridge/<lowercase uuid>"
+  ResourceLocation key; the 21.1 ctor takes (Holder, ResourceLocation, double,
+  Operation)), + the "*" owner fallback for FIELD retargets (javac emits the
+  SUBCLASS as owner for inherited statics - OverencumberedEffect called the
+  MobEffect member it inherits).
+
+## The rest of the ladder (each wall measured-then-fixed, in boot order)
+
+After the effects fix the boot climbed: registry events (mob_effect + block +
+item + entity + ...) -> config loading -> Common setup. Ladder (full stacks in
+latest.log/debug.log of each iteration; final state below):
+
+1. BambooSpikesBlockTile VerifyError ("Holder is not assignable to MobEffect"):
+   the 5.11 getEffect()->Holder desc rewrite made MobEffect-receiver calls
+   unverifiable. NEW REWRITER PASS repairHolderUnwraps (rules/methodunwraps.txt):
+   inserts erased Holder.value() + bare-type CHECKCAST at consumer-local sites
+   (receiver calls / arg slots / locals / compare-jumps). 5 unwraps supp + 2 ml.
+2. menu lane: IForgeMenuType.create -> IMenuTypeExtension.create (pure
+   typerename; the indy SAM FriendlyByteBuf->RegistryFriendlyByteBuf divergence
+   remains the documented next wall in that lane).
+3. Attributes.* holder drift family: getAttributeValue desc rewrite ("*"),
+   Operation enum constant renames (MULTIPLY_TOTAL->ADD_MULTIPLIED_TOTAL,
+   ADDITION->ADD_VALUE), Item.BASE_ATTACK_DAMAGE/SPEED_UUID -> the ItemCompat
+   shim (the canonical 1.20.1 UUIDs; the consumer override is dead on 21.1),
+   AttributeModifier(UUID,String,double,Op) ctor-retarget ->
+   AttributeModifierCompat.INSTANCE.create (name -> "modbridge/<sanitized name>"
+   key; supp WrenchItem's clinit-built dead map).
+4. moonlight ForgeHelperImpl.getReachDistance (ForgeMod.BLOCK_REACH phantom) ->
+   BlockReachCompat shim (vanilla Attributes.BLOCK_INTERACTION_RANGE; the 1.20.1
+   body method-dropped).
+5. fluid-item food effect: bare MobEffect into the Holder-taking
+   MobEffectInstance ctor (ICCE "FlammableEffect does not implement Holder").
+   NEW REWRITER PASS repairBareWraps (rules/methodwraps.txt) - the INVERSE of the
+   unwrap: where a wrapper-get value (checkcast bare type) lands in a
+   Holder-typed argument slot, insert
+   BuiltInRegistries.MOB_EFFECT.wrapAsHolder(value). 6 wraps supp.
+6. defaultDurability -> durability (Item$Properties; the SRG table carries the
+   stale 1.20.1 mojmap name).
+7. menu registration: moonlight PlatHelper.newMusicDisc - the per-mod RecordItem
+   shim diverged the cross-mod descriptor (supp called with ITS shim type).
+   NEW MECHANISM: SHARED SHIMS (rules/shims-shared.txt: "RecordItem=moonlight") -
+   injected ONLY into the owner jar at the fixed com/modbridge/shim/shared/
+   package; every jar's rules resolve the same name; consumer modules read the
+   owner's exported package (cross-mod API). Plus the second RecordItem ctor
+   shape (moonlight passes Supplier<SoundEvent>).
+8. cauldron lane: CauldronInteraction.EMPTY/WATER maps became InteractionMap
+   records -> CauldronCompat shim statics MIRROR the live inner maps (reads AND
+   puts land on the real maps; BANNER/DYED_ITEM stayed plain interaction values).
+9. Potions.* constants -> Holder<Potion> (the 5.11 MobEffects family) + EMPTY
+   left the registry entirely -> PotionCompat shim (a synthetic direct-Holder
+   sentinel; only ever compares unequal to real potions - the 1.20.1 sentinel
+   semantics). Field-produced Holder values flowing into locals typed bare by
+   the original frames / bare args / compare-jumps unwrap via the extended
+   methodunwraps pass (field-producer form).
+10. FMLCommonSetupEvent: PotionUtils.setPotion -> the PotionContentsCompat shim
+    (DataComponents.POTION_CONTENTS; the potion arg arrives in both shapes), the
+    POTION registry desc demotion (DefaultedRegistry -> Registry) + its
+    DefaultedRegistry-interface call sites retargeted to Registry, and the
+    moonlight food-mutation helpers method-dropped (Chicken/Horse/Parrot
+    FOOD_ITEMS statics removed by the 1.21 data-component move - inert).
+11. ResourceLocation ctor rewrite frame gap (FIRST hit, pre-existing since the
+    single-arg fix): frames inside the ctor-arg region still named the removed
+    NEW+DUP pair ("bad offset for Uninitialized" in moonlight
+    BlocksColorInternal$ColoredSet.makeHolderSet). fixArgRegionFrames now runs
+    for the RL rewrite too - factory-style rewrites DROP both uninit entries at
+    mid-arg merges (the result only exists at the ctor position), with the
+    internal-name form for frame slots (the L-form is a ClassFormatError).
+
+## Final state (evidence: testenv/server-121/logs/latest.log, this boot)
+
+The 5.11 wall is BEHIND the mods: both containers construct, ALL registry events
+dispatch (mob_effect/block/item/entity/menu/...), configs load through FML's own
+pipeline, and CommonSetup runs until:
+
+  java.lang.NoSuchMethodError: 'net.minecraft.nbt.CompoundTag
+  net.minecraft.world.item.ItemStack.getOrCreateTag()'
+  at supp BuntingItem.setColor:83 <- ModCreativeTabs.registerItemsToTabs:302
+  (Common setup deferred queue; crash report crash-2026-10-06_19.26.54-fml.txt)
+
+THE NEXT WALL: the 1.20.5 NBT item-tag removal - ItemStack.getOrCreateTag/getTag/
+getOrCreateTagEditing family (35 census sites across ~30 supp/ml classes: item
+color/storage NBT). A semantic data-components migration lane (component types
+per tag key), not a boot wall - exactly the documented honest-stop shape.
+
+Translation counters (final rules): supp = 1089 classes, ctor retargets=2,
+method drops=1, interface repairs=22, holder unwraps=22, bare wraps=6, member
+renames=207, super swaps=10; ml = 489 classes, ctor retargets=1, method drops=8,
+interface repairs=40, holder unwraps=5, member renames=60.
+
+## Gates
+
+- unit: ctor-retarget 3/3 (253 checks), shims 3/3 (ShimFacadeTest 239 checks,
+  68 shims + 1 shared), refmap 3/3, srg-resolver 4/4.
+- matrix: 16/16 (final rules; the matrix resets mods/source-1201 to the fixture -
+  re-copy the trial jars before a trial boot).
+- RUNBOOK additions: (1) rules/memberretargets.txt keys are owner|DESC|name - two
+  rules landed name-first this slice and silently never fired (caught by the new
+  realPhase512RulesLoad test + the Probe loop); (2) build-shims.sh rm -rf's its
+  output dir - a failed javac leaves rules/shims WITHOUT shims.txt and every
+  subsequent agent build then fails ALL translations with "@SHIM@ target ...
+  is not in the shim manifest" (verify the manifest exists after every shim
+  build); (3) frame-stack slots carry INTERNAL names (the L...; form is a
+  ClassFormatError).

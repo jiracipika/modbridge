@@ -1045,3 +1045,90 @@ constructs through the block/item registration and dies at the LAST measured wal
 DeferredRegister creation vs 21.1 registry event order — next slice: eager
 DeferredRegister creation or supplier-side bridging). Gates: all 4 unit scripts
 green, matrix 16/16, 59 shims.
+
+## Phase 5.12 — the mob_effect registry wall falls; the ladder reaches CommonSetup (2026-10-06, afternoon)
+
+The 5.11 handoff's wall is GONE - and its diagnosis was WRONG. Ground truth (raw
+bytecode): moonlight's mob_effect DeferredRegister IS created eagerly at
+construction (RegHelper.register -> RegHelperImpl.computeIfAbsent ->
+DeferredRegister.create + register(bus)); the real failure was INSIDE the
+mob_effect RegisterEvent dispatch - supp's OverencumberedEffect ctor called the
+removed MobEffect.addAttributeModifier(Attribute, String, double, Operation)
+(Attributes field desc drift + the removed ctor), the addEntries loop aborted,
+and supplementaries:flammable never registered. The 5.11-documented
+"registry value not present: mob_effect/supplementaries:flammable" was the
+downstream symptom (the item-time wrapper lookup finding what the aborted event
+never wrote). THE CHOICE: neither eager DeferredRegister creation nor
+supplier-side bridging - no registry-lane change at all (moonlight's constructs
+untouched); the minimal bridge was the effects/attributes desc-drift family.
+
+What fell (in boot order, each measured-then-fixed; full ladder +
+runbook lessons: testenv/evidence/phase512-mob-effect-wall-and-commonsetup.txt):
+
+1. Effects/attributes lane: MobEffect.addAttributeModifier "*" retarget to the
+   MobEffectCompat shim (uuid -> "modbridge/<uuid>" ResourceLocation key);
+   Attributes field desc retargets (Holder); the "*" owner fallback extended to
+   FIELD retargets (javac emits the subclass as owner for inherited statics).
+2. VerifyError family: NEW PASS repairHolderUnwraps (rules/methodunwraps.txt) -
+   erased Holder.value() + bare CHECKCAST at consumer-local sites after the 5.11
+   getEffect desc rewrite (receiver calls, bare-typed landing args, locals,
+   compare-jumps); the field-producer form for retargeted statics stored into
+   locals the original frames typed bare.
+3. Bare-wrap pass: NEW PASS repairBareWraps (rules/methodwraps.txt) - the
+   INVERSE: wrapper-get values (checkcast bare) landing in Holder-typed argument
+   slots get Registry.wrapAsHolder inserted (ICCE "FlammableEffect does not
+   implement Holder" at the fluid event). Bounded forward stack-scan; aborts on
+   branches/DUPs/unknown shapes (never guesses).
+4. Cross-mod shim-type divergence: the per-mod RecordItem shim broke moonlight's
+   PlatHelper.newMusicDisc signature (each jar resolved its OWN shim type in the
+   descriptor). NEW MECHANISM: SHARED SHIMS (rules/shims-shared.txt) - injected
+   ONLY into the owner jar at the fixed com/modbridge/shim/shared/ package;
+   every jar's rules resolve the same name (JPMS-safe: the owner module exports
+   the package, consumer mods already read it).
+5. Setup-lane ladder: Operation enum constant renames, Item attack-UUID shims +
+   AttributeModifier ctor-retarget (dead-data clinit), BlockReachCompat
+   (BLOCK_REACH -> BLOCK_INTERACTION_RANGE), Potions.* -> Holder + the EMPTY
+   sentinel shim (the empty potion left the registry; Holder.direct sentinel),
+   POTION registry desc demotion + DefaultedRegistry-interface owner swaps,
+   PotionContentsCompat.setPotion (data components), moonlight food-mutation
+   helpers method-dropped (Chicken/Horse/Parrot FOOD_ITEMS removed in 1.21),
+   IForgeMenuType -> IMenuTypeExtension typerename, ModLoader state-machine
+   retargets (FmlCompat shim; the config guard passes by the documented
+   eager-config semantic).
+6. PRE-EXISTING frame gap, first hit: the ResourceLocation ctor rewrite never
+   rebuilt frames inside the ctor-arg region ("bad offset for Uninitialized",
+   moonlight makeHolderSet). fixArgRegionFrames now runs for the RL rewrite -
+   factory-style rewrites DROP both uninit entries at mid-arg merges (replacing
+   instead-of-dropping leaves a phantom slot = VerifyError), and frame stack
+   slots carry INTERNAL names (the L-form is a ClassFormatError).
+
+FINAL STATE: both mods construct, ALL registry events dispatch, configs load
+through FML's own pipeline, and CommonSetup runs until the next wall:
+
+  NoSuchMethodError: 'net.minecraft.nbt.CompoundTag
+  ItemStack.getOrCreateTag()' at supp BuntingItem.setColor:83 <- 
+  ModCreativeTabs.registerItemsToTabs (Common setup deferred queue)
+
+THE NEXT WALL: the 1.20.5 NBT item-tag removal - the ItemStack tag family
+(getOrCreateTag/getTag, 35 census sites across ~30 supp/ml classes: item
+color/storage NBT). A semantic data-components migration lane (a component type
+per tag key), not a boot wall. Done was NOT reached; everything up to and
+including most of CommonSetup was.
+
+Gates: ctor-retarget 3/3 (253 checks), shims 3/3 (239 checks; 68 shims + 1
+shared), refmap 3/3, srg-resolver 4/4, matrix 16/16. Counters (final rules):
+supp = 1089 classes / ctor retargets=2 / method drops=1 / interface repairs=22 /
+holder unwraps=22 / bare wraps=6 / member renames=207; ml = 489 classes / ctor
+retargets=1 / method drops=8 / interface repairs=40 / holder unwraps=5.
+
+Caveats (honest): the stringResolverCodec and defaultDurability SRG entries
+carry stale 1.20.1 mojmap names (the mojmemberrenames mechanism now covers
+call-site renames for them); the record-shim cross-mod readability relies on FML
+auto-exports + cross-mod reads (proven by the boot); cauldron EMPTY/WATER puts
+land on the real 21.1 maps but the 1.20.1 key/value erasure semantics are
+unclaimed; the PotionCompat.EMPTY sentinel only guarantees never-equal-to-real.
+RUNBOOK: memberretargets keys are owner|DESC|name (two rules landed name-first
+and silently never fired - pinned by realPhase512RulesLoad); build-shims rm -rf's
+its output dir, so a failed javac leaves rules/shims without shims.txt and every
+following agent build then fails ALL translations ("@SHIM@ target ... is not in
+the shim manifest") - verify the manifest after every shim build.

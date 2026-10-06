@@ -1,0 +1,16 @@
+# Bare-wrap call sites (phase 5.12) - the INVERSE of methodunwraps.txt: the
+# translated wrapper-get family (EntryWrapperCompat.get returns the registry VALUE,
+# followed by a checkcast) flows into call sites whose target methods the 5.11 desc
+# rewrites migrated to Holder<MobEffect> args; vanilla's MobEffectInstance ctor then
+# calls Holder.value() on the bare instance at runtime
+# ("IncompatibleClassChangeError: FlammableEffect does not implement the requested
+# interface net.minecraft.core.Holder", measured inside the fluid RegisterEvent
+# dispatch - supp ModFluids.lambda$static$2 building the LumiseneBottleItem food
+# effect). Where a bare-typed value lands in a Holder-typed argument slot, the pass
+# inserts BuiltInRegistries.MOB_EFFECT.wrapAsHolder(value) (the 21.1-native
+# bare->holder bridge). Measured producers: supp ModFluids (food effect),
+# FlammableLiquidBlock.entityInside, SackItem.inventoryTick,
+# BombEntity$BombType.afterExploded, LocalPlayerMixin (mixin-self hasEffect helper),
+# moonlight (0 - its one checkcast duck-types into a bare-typed method and is
+# correctly left alone). Keys are FINAL space: checkcast desc | holder type.
+net/minecraft/world/effect/MobEffect|net/minecraft/core/Holder -> net/minecraft/core/registries/BuiltInRegistries|MOB_EFFECT|Lnet/minecraft/core/Registry;
