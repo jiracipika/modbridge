@@ -248,3 +248,11 @@ net/minecraftforge/registries/IForgeRegistry	net/minecraft/core/Registry
 # so the handler links + registers; FIRING is documented dead (bus dispatches
 # EntityTickEvent.Post, not IS-A the shim - no 21.1 event to hook).
 net/minecraftforge/event/entity/living/LivingEvent$LivingTickEvent	@SHIM@/LivingTickEvent
+
+# --- event lane, iteration 2 (phase 5.10): EntityItemPickupEvent has NO 21.1
+# equivalent (item-event package kept ItemEvent/ItemExpireEvent/ItemTossEvent only).
+# Shim extends the real ItemEvent (ctor (Player,ItemEntity), covariant getEntity():
+# Player) + own inert cancellation/Result state (forge's Event.Result is gone).
+# FIRING documented dead - no 21.1 pickup event to dispatch. Single referrer:
+# supp ServerEventsForge.onItemPickup.
+net/minecraftforge/event/entity/player/EntityItemPickupEvent	@SHIM@/EntityItemPickupEvent
