@@ -1,5 +1,9 @@
 package com.modbridge.rewriter;
 
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
@@ -58,6 +62,7 @@ public final class ShimFacadeTest {
         conditionShimExactness();
         criteriaShimExactness();
         dataResultShimExactness();
+        networkShimExactness();
         rulesAndInjection();
         rulesAndInjection();
     }
@@ -529,12 +534,87 @@ public final class ShimFacadeTest {
                 "Error.message() reachable (the PartialResult.message retarget's dispatch target)");
     }
 
+    // --------------------------------------------------- networking facades (phase 5.10)
+
+    /**
+     * The converged wall: forge's SimpleChannel/PacketDistributor/NetworkEvent world
+     * replaced by inert per-mod facades via typerenames (descriptors follow
+     * automatically). Registration is stored; sends log-once and drop; network play
+     * NOT claimed.
+     */
+    void networkShimExactness() throws Exception {
+        Class<?> nrc = com.modbridge.shim.NetworkRegistryCompat.class;
+        check(desc(nrc, "newSimpleChannel")
+                        .equals("(Lnet/minecraft/resources/ResourceLocation;Ljava/util/function/Supplier;Ljava/util/function/Predicate;Ljava/util/function/Predicate;)Lcom/modbridge/shim/SimpleChannelCompat;"),
+                "newSimpleChannel desc = the 1.20.1 static surface with shim return");
+        Object channel = nrc.getDeclaredMethod("newSimpleChannel",
+                net.minecraft.resources.ResourceLocation.class, java.util.function.Supplier.class,
+                java.util.function.Predicate.class, java.util.function.Predicate.class)
+                .invoke(null, null, null, null, null);
+        check(channel instanceof com.modbridge.shim.SimpleChannelCompat,
+                "newSimpleChannel returns the inert channel (caller field keeps its value)");
+
+        com.modbridge.shim.SimpleChannelCompat sc = (com.modbridge.shim.SimpleChannelCompat) channel;
+        check(desc(sc.getClass(), "registerMessage")
+                        .equals("(ILjava/lang/Class;Ljava/util/function/BiConsumer;Ljava/util/function/Function;Ljava/util/function/BiConsumer;Ljava/util/Optional;)Lcom/modbridge/shim/MessageHandler;"),
+                "registerMessage desc = the 1.20.1 virtual surface with marker return");
+        sc.registerMessage(1, String.class, null, null, null, java.util.Optional.empty());
+        check(sc.registrations.size() == 1 && sc.registrations.get(0).equals("java.lang.String#1"),
+                "registerMessage stores the (type#discriminator) mapping");
+        sc.send(null, new Object());
+        sc.sendToServer(new Object());
+        check(true, "send/sendToServer: inert, no throw");
+
+        // reflection (getDeclaredMethods) on NetworkEvent$Context would resolve its
+        // Connection/ServerPlayer signature types at load time - netty + the vanilla
+        // cascade. Assert the member surface STRUCTURALLY from the class bytes (the
+        // criteriaShimExactness lesson).
+        ClassNode ctxNode = new ClassNode();
+        new ClassReader(java.nio.file.Files.readAllBytes(
+                Path.of("rules/shims/com/modbridge/shim/NetworkEvent$Context.class")))
+                .accept(ctxNode, 0);
+        java.util.Set<String> sigs = new java.util.HashSet<>();
+        for (MethodNode m : ctxNode.methods) sigs.add(m.name + m.desc);
+        check(sigs.contains("enqueueWork(Ljava/lang/Runnable;)Ljava/util/concurrent/CompletableFuture;"),
+                "NetworkEvent$Context.enqueueWork desc = 1.20.1 surface (byte-level)");
+        check(sigs.contains("getDirection()Lcom/modbridge/shim/NetworkDirection;"),
+                "getDirection returns the shim enum (desc parity after typerename)");
+        check(sigs.contains("getNetworkManager()Lnet/minecraft/network/Connection;"),
+                "getNetworkManager desc = 21.1 Connection (valid target)");
+        check(sigs.contains("getSender()Lnet/minecraft/server/level/ServerPlayer;"),
+                "getSender desc = 21.1 ServerPlayer (valid target)");
+        check(sigs.contains("setPacketHandled(Z)V"),
+                "setPacketHandled desc = 1.20.1 surface");
+
+        check(com.modbridge.shim.NetworkDirection.values().length == 4,
+                "NetworkDirection: 4 constants (1.20.1 parity), values()/ordinal() free");
+
+        Class<?> pd = com.modbridge.shim.PacketDistributor.class;
+        for (String f : new String[]{"ALL", "NEAR", "PLAYER", "TRACKING_ENTITY", "TRACKING_ENTITY_AND_SELF"}) {
+            check(java.lang.reflect.Modifier.isStatic(pd.getField(f).getModifiers()),
+                    "PacketDistributor." + f + " static field present (measured GETSTATIC surface)");
+        }
+        check(desc(pd, "noArg").equals("()Lcom/modbridge/shim/PacketDistributor$PacketTarget;"),
+                "noArg desc = shim PacketTarget return");
+        check(desc(pd, "with").equals("(Ljava/util/function/Supplier;)Lcom/modbridge/shim/PacketDistributor$PacketTarget;"),
+                "with(Supplier) desc = shim PacketTarget return");
+
+        Class<?> tp = com.modbridge.shim.PacketDistributor$TargetPoint.class;
+        check(tp.getConstructor(double.class, double.class, double.class, double.class,
+                net.minecraft.resources.ResourceKey.class) != null,
+                "TargetPoint (DDDDLnet/minecraft/resources/ResourceKey;)V ctor surface (moonlight NEW site)");
+
+        Class<?> mh = com.modbridge.shim.MessageHandler.class;
+        check(mh.getSuperclass() == Object.class && mh.getInterfaces().length == 0,
+                "MessageHandler: bare marker class (the erased registerMessage return)");
+    }
+
     // ------------------------------------------------------- rules-level + injection
 
     void rulesAndInjection() throws Exception {
         Rewriter r = new Rewriter();
         r.loadRules(Path.of("rules"));
-        check(r.shims.size() == 30, "rules/shims: manifest loads 30 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat)");
+        check(r.shims.size() == 38, "rules/shims: manifest loads 38 shim classes (incl. ForgeCapabilities tokens, FMLJavaModLoadingContext, ModConfigBridge, the 8 loot-lane classes, the 2 condition-lane classes, the criteria-lane classes, DataResultCompat, CriteriaTriggersCompat, ResourceLocationCompat, the 8 networking facades)");
         check(r.remapType("net/minecraftforge/common/ToolAction").equals("net/neoforged/neoforge/common/ItemAbility"),
                 "rules: ToolAction -> ItemAbility");
         check(r.remapType("net/minecraftforge/common/ToolActions").equals("net/neoforged/neoforge/common/ItemAbilities"),
@@ -600,13 +680,39 @@ public final class ShimFacadeTest {
         check(r.remapType("com/mojang/serialization/DataResult$PartialResult")
                         .equals("com/mojang/serialization/DataResult$Error"),
                 "rules: PartialResult -> Error typerename (the desc/link-level drift shape)");
+        // networking family (phase 5.10): the whole forge-networking world routes to
+        // per-mod inert shims - $-suffixed inner names survive intact
+        check(r.remapType("net/minecraftforge/network/NetworkRegistry")
+                        .equals("com/modbridge/shim/testmod/NetworkRegistryCompat"),
+                "rules: NetworkRegistry -> NetworkRegistryCompat");
+        check(r.remapType("net/minecraftforge/network/simple/SimpleChannel")
+                        .equals("com/modbridge/shim/testmod/SimpleChannelCompat"),
+                "rules: SimpleChannel -> SimpleChannelCompat");
+        check(r.remapType("net/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler")
+                        .equals("com/modbridge/shim/testmod/MessageHandler"),
+                "rules: IndexedMessageCodec$MessageHandler -> MessageHandler marker");
+        check(r.remapType("net/minecraftforge/network/NetworkEvent$Context")
+                        .equals("com/modbridge/shim/testmod/NetworkEvent$Context"),
+                "rules: NetworkEvent$Context -> shim ($-name survives)");
+        check(r.remapType("net/minecraftforge/network/NetworkDirection")
+                        .equals("com/modbridge/shim/testmod/NetworkDirection"),
+                "rules: NetworkDirection -> shim enum");
+        check(r.remapType("net/minecraftforge/network/PacketDistributor")
+                        .equals("com/modbridge/shim/testmod/PacketDistributor"),
+                "rules: PacketDistributor -> shim");
+        check(r.remapType("net/minecraftforge/network/PacketDistributor$PacketTarget")
+                        .equals("com/modbridge/shim/testmod/PacketDistributor$PacketTarget"),
+                "rules: PacketDistributor$PacketTarget -> shim");
+        check(r.remapType("net/minecraftforge/network/PacketDistributor$TargetPoint")
+                        .equals("com/modbridge/shim/testmod/PacketDistributor$TargetPoint"),
+                "rules: PacketDistributor$TargetPoint -> shim");
         check(r.classKnown("com/modbridge/shim/testmod/LazyOptional"),
                 "classKnown(): per-mod shim names vouch as known (mixin eager-ref check)");
 
         Map<String, byte[]> entries = new HashMap<>();
         entries.put("com/modbridge/shim/testmod/LazyOptional.class", new byte[]{1});
         r.injectShims(entries);
-        check(entries.size() == 30, "injectShims(): all 30 shims present under the per-mod package");
+        check(entries.size() == 38, "injectShims(): all 38 shims present under the per-mod package");
         check(entries.get("com/modbridge/shim/testmod/LazyOptional.class")[0] == 1,
                 "injectShims(): never clobbers a class the jar already defines");
         check(!entries.containsKey("net/neoforged/neoforge/common/util/LazyOptional.class"),

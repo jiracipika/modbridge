@@ -167,3 +167,25 @@ net/minecraft/commands/CommandFunction	net/minecraft/commands/functions/CommandF
 net/minecraft/world/level/storage/loot/entries/LootTableReference	net/minecraft/world/level/storage/loot/entries/NestedLootTable
 net/minecraft/network/chat/contents/LiteralContents	net/minecraft/network/chat/contents/PlainTextContents$LiteralContents
 net/minecraft/world/item/alchemy/PotionUtils	net/minecraft/world/item/alchemy/PotionContents
+
+# --- NETWORKING family (networking lane, phase 5.10, the CONVERGED wall: both mods
+# died CNFE net.neoforged.network.NetworkRegistry at moonlight ModMessages clinit).
+# Exhaustive constant-pool type census over both jars (every net/minecraftforge/
+# network/* token): SimpleChannel world + PacketDistributor family + NetworkEvent$
+# Context. All INERT facades (network play NOT claimed); typerename-only - no new
+# rewriter mechanisms; the erased lambda/ctor descriptors mentioning these types
+# follow automatically (remapDesc), which is WHY typerenames beat member rules here.
+# Deliberately NOT mapped: NetworkHooks (getEntitySpawningPacket/openScreen - lazy
+# resolution, boot-safe, dies only at entity-spawn/menu-open: RUNTIME walls for a
+# later slice) and the IForgeMenuType.create menu path (IForgeMenuType GONE on 21.1;
+# needs an indy SAM rewrite FriendlyByteBuf -> RegistryFriendlyByteBuf +
+# new MenuType(factory, featureflags) bridge - the NEXT wall, boot-relevant because
+# RegisterEvent fires during construction).
+net/minecraftforge/network/NetworkRegistry	@SHIM@/NetworkRegistryCompat
+net/minecraftforge/network/simple/SimpleChannel	@SHIM@/SimpleChannelCompat
+net/minecraftforge/network/simple/IndexedMessageCodec$MessageHandler	@SHIM@/MessageHandler
+net/minecraftforge/network/NetworkEvent$Context	@SHIM@/NetworkEvent$Context
+net/minecraftforge/network/NetworkDirection	@SHIM@/NetworkDirection
+net/minecraftforge/network/PacketDistributor	@SHIM@/PacketDistributor
+net/minecraftforge/network/PacketDistributor$PacketTarget	@SHIM@/PacketDistributor$PacketTarget
+net/minecraftforge/network/PacketDistributor$TargetPoint	@SHIM@/PacketDistributor$TargetPoint
