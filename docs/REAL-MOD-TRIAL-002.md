@@ -1132,3 +1132,78 @@ and silently never fired - pinned by realPhase512RulesLoad); build-shims rm -rf'
 its output dir, so a failed javac leaves rules/shims without shims.txt and every
 following agent build then fails ALL translations ("@SHIM@ target ... is not in
 the shim manifest") - verify the manifest after every shim build.
+
+## Phase 5.13 — the NBT item-tag removal wall falls; the ladder crosses the pack lane into runtime resource generation (2026-10-07, FINAL campaign day)
+
+The 5.12 honest-stop wall is GONE. The 1.20.5 NBT item-tag removal —
+ItemStack.getTag/getOrCreateTag/getTagElement/.../save/of — fell to a TAG-BACKED
+COMPATIBILITY VIEW: the SHARED shim ItemStackTagCompat
+(rules/shims-shared.txt, owner moonlight at
+com/modbridge/shim/shared/), every view method backed by
+DataComponents.CUSTOM_DATA (vanilla 21.1's own arbitrary-payload component, which
+syncs with the stack). 9 static-kind memberretargets (keys POST-mapSrg, descs the
+1.20.1 shapes; the ItemStack receiver rides in as argument 1 — operand stack
+identical, frames untouched). Census re-measured instruction-level over the raw
+jars: **160 call sites / 74 classes (supp 145/67, ml 15/7), 0 declared
+overrides, every site owner=ItemStack** — the family is fully rule-covered.
+Runtime proof: a 22-check own-JVM test against the REAL 21.1 component store
+(live CUSTOM_DATA round-trips; save re-encodes the empty stack in the 1.20.1 air
+shape because 21.1 save THROWS on empty; 21.1 save RETURNS a new tag — documented
+drift). The semantic remainder is in the shim's javadoc: vanilla keys that moved
+to DEDICATED components ("display", "BlockEntityTag" copy-in, "Fireworks", banner
+"Patterns", map "map"/"generation") don't surface from the view through vanilla
+systems; mod-INTERNAL tag round-trips behave exactly as on 1.20.1.
+
+What fell behind it (each measured-then-fixed; full ladder + runbook:
+testenv/evidence/phase513-nbt-removal.txt):
+
+1. Fireworks: FireworkRocketItem$Shape (CNFE, supp ModSetup creeper-shape
+   registration) -> pure typerename to component/FireworkExplosion$Shape (same
+   constant names; vanilla SHAPE_BY_ITEM survives). 5 classes remap consistently
+   including moonlight's cross-mod registerFireworkRecipe signature.
+2. Pack lane (CNFE Pack$Info): 21.1 split Pack.Info + 9-arg Pack.create into
+   PackLocationInfo/Pack.Metadata/PackSelectionConfig. PackCompat shim + 2
+   ctorretargets (Info -> Metadata record; 2-arg PackMetadataSection ->
+   +Optional) + 1 memberretarget (create) + 2 accessor renames. The pack builds
+   and the repository accepts it.
+3. Indy SAM shape: NEW MECHANISM rules/indysams.txt — 1.20.1's
+   ResourcesSupplier.open(String) is gone (openPrimary/openFull(PackLocationInfo,
+   Pack$Metadata)); the lambda implemented neither (AbstractMethodError at the
+   repository reload). The rule rewrites the indy name + both bsm MethodTypes and
+   DERIVES the impl desc (captured prefix kept, old-desc-must-end-with-old-SAM
+   validated); fail-fast if the impl body loads a SAM-parameter slot; maxLocals
+   recomputed. Two live sites.
+4. getMetadataSection override body (CCE): always-true serializer instanceof +
+   the metadata SUPPLIER returned unwrapped -> pinned single-site pass
+   (fixMetadataSectionOverride): reference compare against
+   PackMetadataSection.TYPE (stack-depth-neutral swap, maxStack + merge-frame
+   retypes) + Supplier.get unwrap. 21.1 vanilla queries pack AND filter sections.
+5. NEW-REWRITE PASS FIX (pre-existing since phase 4, second live hit): the
+   NEW+DUP forward scans aborted at ANY TypeInsnNode — ResType's ANEWARRAY in the
+   arg region left a `new ResourceLocation(ns, path)` (PRIVATE ctor on 21.1,
+   IllegalAccessError), and a checkcast had hidden the Pack$Info ctorretarget.
+   Both scans now stop only at nested NEW; regression tests added.
+
+LADDER RESULT: both containers construct, ALL registry events dispatch, configs
+load, CommonSetup completes, the pack lane runs end to end, and moonlight's
+runtime resource generation SUCCEEDS ("Finished runtime resources generation for
+1 packs in a total of 10 ms"). The ladder stops in the datapack parse that
+follows, at the next wall, precisely scoped:
+
+  AbstractMethodError: moonlight.core.misc.CaveFilter$Type does not implement
+  'abstract MapCodec codec()' of PlacementModifierType (21.1 changed the RETURN
+  TYPE Codec -> MapCodec; the override no longer overrides; fires inside vanilla
+  KeyDispatchCodec.decode during worldgen JSON parsing)
+
+Census: 3 moonlight classes reference PlacementModifierType, 0 supp. The fix is a
+semantic codec conversion (MapCodec-building body, or an override-desc-rewrite
+mechanism that does not exist yet) — phase 5.14 head-of-list. Done was NOT
+reached (rcon not reached — honest partial); everything up to and including the
+resource-pack lane was, three walls past the 5.12 close.
+
+Gates: ctor-retarget 3/3 (278 checks), shims 3/3 (265 + 22; 70 shims + 2
+shared), refmap 3/3, srg-resolver 4/4, linkie clean, matrix 16/16. Counters
+(final rules): supp = 1089 classes, ctor retargets=2, method drops=1, interface
+repairs=22, holder unwraps=22, bare wraps=6, member renames=352, super swaps=10;
+ml = 489 classes, ctor retargets=4, method drops=8, interface repairs=40, holder
+unwraps=5, member renames=81.

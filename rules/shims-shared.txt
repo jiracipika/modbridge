@@ -6,3 +6,8 @@
 # the package (FML exports every package of a mod module); consumer mods read it
 # (cross-mod API).
 RecordItem=moonlight
+# (phase 5.13) the NBT item-tag compatibility view - shared so supp and ml
+# resolve the SAME type (the retargeted call shapes cross mod boundaries via
+# moonlight's API); owner moonlight (the dependency; supp reads it cross-mod,
+# the proven RecordItem shape)
+ItemStackTagCompat=moonlight

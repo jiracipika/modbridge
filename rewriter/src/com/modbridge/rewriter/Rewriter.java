@@ -141,6 +141,8 @@ public class Rewriter {
     final Map<String, String[]> ctorRetargets = new HashMap<>();
     /** owners named by ctorRetargets (fast pre-scan before the full-key lookup) */
     final Set<String> ctorRetargetOwners = new HashSet<>();
+    /** indy SAM shape rewrites (phase 5.13): interfaceOwner|samName|samDesc -> [newName, newSamDesc] */
+    final Map<String, String[]> indySams = new HashMap<>();
     /** method-body drops for whole methods whose 1.20.1 semantics are already covered
      *  elsewhere on 21.1 (or are documented no-ops): owner|desc|name -> typed return */
     final Set<String> methodDrops = new HashSet<>();
@@ -195,6 +197,7 @@ public class Rewriter {
     int fmlChainsSpliced;
     int resourceLocationCtors;
     int ctorRetargetsApplied;
+    int indySamsApplied;
     int memberRenamesApplied;
     int classesTransformed;
 
@@ -229,6 +232,7 @@ public class Rewriter {
         addMojMemberRenames(readLines(rulesDir.resolve("mojmemberrenames.txt")));
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
         addSharedShims(readLinesOptional(rulesDir.resolve("shims-shared.txt")));
+        addIndySamRules(readLinesOptional(rulesDir.resolve("indysams.txt")));
         loadShimsFromDir(rulesDir.resolve("shims"));
         printRuleStats();
     }
@@ -251,6 +255,7 @@ public class Rewriter {
         addMojMemberRenames(resourceLines("/rules/mojmemberrenames.txt"));
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
         addSharedShims(resourceLinesOptional("/rules/shims-shared.txt"));
+        addIndySamRules(resourceLinesOptional("/rules/indysams.txt"));
         loadShimsFromClasspath("/rules/shims");
         printRuleStats();
     }
@@ -884,6 +889,12 @@ public class Rewriter {
         }
         applyMemberRenames(cn);
         remapClass(cn);
+        // must run AFTER remapClass: indysams keys are final-space (post-mapSrg indy
+        // name, final-space bsm types)
+        rewriteIndySams(cn);
+        // the moonlight dynamic-pack lane's getMetadataSection override body (same
+        // lane as rewriteIndySams/PackCompat; see the pass javadoc)
+        fixMetadataSectionOverride(cn);
         // must run AFTER remapClass: call-site owners are final-space here, matching
         // the interfaces-1211.txt inventory
         repairInterfaceCallSites(cn);
@@ -1496,11 +1507,21 @@ public class Rewriter {
                     n = n.getNext();
                     continue;
                 }
-                // forward-scan for the INVOKESPECIAL that consumes this NEW+DUP pair
+                // forward-scan for the INVOKESPECIAL that consumes this NEW+DUP pair.
+                // STOP only at a nested NEW (see rewriteCtorRetargets for the same fix):
+                // non-NEW type instructions in the argument region (CHECKCAST /
+                // ANEWARRAY / INSTANCEOF) must not abort the scan (phase 5.13 live
+                // boot: moonlight ResType builds new ResourceLocation(format(...),
+                // String.format(..., new String[]{...})) - the region's ANEWARRAY
+                // aborted the scan, the site kept the 2-arg ctor and 21.1 made that
+                // ctor PRIVATE -> IllegalAccessError at the resource-gen lane).
                 AbstractInsnNode c = dup.getNext();
                 boolean matched = false;
                 AbstractInsnNode after = null;
-                while (c != null && !(c instanceof TypeInsnNode)) {
+                while (c != null) {
+                    if (c instanceof TypeInsnNode stop && stop.getOpcode() == Opcodes.NEW) {
+                        break;
+                    }
                     if (c instanceof MethodInsnNode ctor
                             && ctor.getOpcode() == Opcodes.INVOKESPECIAL
                             && "<init>".equals(ctor.name)
@@ -1582,7 +1603,18 @@ public class Rewriter {
                 AbstractInsnNode c = dup.getNext();
                 MethodInsnNode ctor = null;
                 String[] rule = null;
-                while (c != null && !(c instanceof TypeInsnNode)) {
+                // STOP only at a nested NEW (another construction in flight - its own
+                // NEW+DUP+<init> is self-contained and must not be consumed here).
+                // CHECKCAST/INSTANCEOF/ANEWARRAY in the argument region must NOT stop
+                // the scan (phase 5.13 live boot: moonlight DynamicResourcePack's
+                // lambda$registerPack$2 builds new Pack.Info(metadata.get() CAST to
+                // PackMetadataSection).description(), .packFormat()... - the arg
+                // region's checkcast aborted the scan, the rule never fired and the
+                // removed Pack$Info.<init> stayed in the bytecode).
+                while (c != null) {
+                    if (c instanceof TypeInsnNode ti && ti.getOpcode() == Opcodes.NEW) {
+                        break; // nested construction: leave this NEW+DUP pair untouched
+                    }
                     if (c instanceof MethodInsnNode mi
                             && mi.getOpcode() == Opcodes.INVOKESPECIAL
                             && "<init>".equals(mi.name)
@@ -2216,6 +2248,197 @@ public class Rewriter {
         mn.instructions.insert(after, new MethodInsnNode(Opcodes.INVOKEINTERFACE,
                 "net/minecraft/core/Holder", "value", "()Ljava/lang/Object;", true));
         holderUnwrapsApplied++;
+    }
+
+    /**
+     * moonlight's dynamic-pack lane, second half (phase 5.13 live boot): the
+     * DynamicResourcePack.getMetadataSection override body is DOUBLY 1.20.1-shaped —
+     * (a) it tests {@code arg instanceof PackMetadataSectionSerializer}, and the
+     * concrete serializer class is GONE on 21.1 (PackMetadataSection.TYPE is a
+     * MetadataSectionType now), (b) it returns the metadata SUPPLIER FIELD (not
+     * {@code .get()}). 21.1 vanilla queries BOTH the pack section
+     * (readMetaAndCreate, needs the real PackMetadataSection or it fails with
+     * "Missing metadata") and the filter section (hidden-pack filtering, casts to
+     * ResourceFilterSection) — so the check must be exact and the unwrap real:
+     * {@code arg == PackMetadataSection.TYPE ? metadata.get() : null} (the 21.1
+     * moonlight semantic). Bytecode surgery, both shapes measured off the raw jar:
+     * [ALOAD_1, INSTANCEOF X, IFEQ null] -> [ALOAD_1, GETSTATIC TYPE, IF_ACMPNE null]
+     * (net stack depth 0 in both forms — frames stay valid), and the
+     * [ALOAD_0, GETFIELD metadata] producer gains an INVOKEINTERFACE Supplier.get.
+     * Single measured site (census: the only mod-side getMetadataSection override in
+     * either jar); the pass is a no-op for every other class and fails fast if the
+     * pinned shape drifts.
+     */
+    void fixMetadataSectionOverride(ClassNode cn) {
+        if (!cn.name.equals("net/mehvahdjukaar/moonlight/api/resources/pack/DynamicResourcePack")) {
+            return;
+        }
+        boolean fixed = false;
+        for (MethodNode mn : cn.methods) {
+            if (!"getMetadataSection".equals(mn.name)) continue;
+            for (AbstractInsnNode n : mn.instructions) {
+                // shape (a): ALOAD_1; INSTANCEOF <serializer>; IFEQ <null-branch>.
+                // NB the serializer type may ALREADY be typerenamed to the surviving
+                // MetadataSectionSerializer interface by the time this pass runs
+                // (remapClass ran first), so match both spellings.
+                if (n instanceof VarInsnNode v && v.getOpcode() == Opcodes.ALOAD && v.var == 1
+                        && n.getNext() instanceof TypeInsnNode ti
+                        && ti.getOpcode() == Opcodes.INSTANCEOF
+                        && (ti.desc.equals("net/minecraft/server/packs/metadata/MetadataSectionSerializer")
+                                || ti.desc.endsWith("PackMetadataSectionSerializer"))
+                        && n.getNext().getNext() instanceof JumpInsnNode jump
+                        && jump.getOpcode() == Opcodes.IFEQ) {
+                    AbstractInsnNode after = jump.getNext();
+                    FieldInsnNode getType = new FieldInsnNode(Opcodes.GETSTATIC,
+                            "net/minecraft/server/packs/metadata/pack/PackMetadataSection",
+                            "TYPE", "Lnet/minecraft/server/packs/metadata/MetadataSectionType;");
+                    JumpInsnNode acmpne = new JumpInsnNode(Opcodes.IF_ACMPNE, jump.label);
+                    mn.instructions.insert(jump, getType);
+                    mn.instructions.insert(getType, acmpne);
+                    // keep the ALOAD_1 (the first comparand); drop only the old
+                    // instanceof + IFEQ
+                    mn.instructions.remove(ti);
+                    mn.instructions.remove(jump);
+                    // the compare path stacks two refs; the old instanceof path stacked one
+                    mn.maxStack = Math.max(mn.maxStack, 2);
+                    n = after;
+                    fixed = true;
+                }
+                // shape (b): ALOAD_0; GETFIELD metadata:Supplier  ->  + Supplier.get()
+                if (n instanceof VarInsnNode v && v.getOpcode() == Opcodes.ALOAD && v.var == 0
+                        && n.getNext() instanceof FieldInsnNode f
+                        && f.getOpcode() == Opcodes.GETFIELD
+                        && "metadata".equals(f.name)
+                        && f.desc.startsWith("Ljava/util/function/Supplier")) {
+                    mn.instructions.insert(f, new MethodInsnNode(Opcodes.INVOKEINTERFACE,
+                            "java/util/function/Supplier", "get",
+                            "()Ljava/lang/Object;", true));
+                    fixed = true;
+                }
+            }
+        }
+        if (!fixed) {
+            throw new IllegalStateException("fixMetadataSectionOverride: the pinned "
+                    + "DynamicResourcePack.getMetadataSection shapes did not match in " + cn.name);
+        }
+        // the merge frame at the return now carries the UNWRAPPED section (Object) on
+        // the goto path, not the Supplier - the frame entry must follow or the class
+        // dies at verification
+        for (MethodNode mn : cn.methods) {
+            if (!"getMetadataSection".equals(mn.name) || mn.instructions == null) continue;
+            for (AbstractInsnNode n : mn.instructions) {
+                if (n instanceof FrameNode fr && fr.stack != null) {
+                    fr.stack.replaceAll(o -> "java/util/function/Supplier".equals(o)
+                            ? "java/lang/Object" : o);
+                }
+            }
+        }
+    }
+
+    /** indy SAM shape rewrites (rules/indysams.txt, phase 5.13): a vanilla functional
+     *  interface whose SAM changed NAME+SHAPE across versions. 21.1 split
+     *  Pack.ResourcesSupplier's open(String) into openPrimary(PackLocationInfo) /
+     *  openFull(PackLocationInfo, Pack$Metadata); the metafactory resolves the SAM BY
+     *  NAME at indy bootstrap and neoforge's readMetaAndCreate dispatches openFull —
+     *  the 1.20.1 "open" lambda class implements neither (AbstractMethodError, live
+     *  boot at the PackRepository reload). The rule rewrites the indy name and BOTH
+     *  bsm MethodTypes (samMethodType + instantiatedMethodType); the LAMBDA IMPL
+     *  handle's desc is DERIVED per site: its captured-argument prefix is kept and the
+     *  new SAM args appended (the old impl desc must END WITH the old SAM args —
+     *  validated).
+     *  SAFETY: the rewrite is only valid for an impl that never LOADS a SAM parameter
+     *  slot (measured bodies ignore them: aload_0; areturn "return the captured pack";
+     *  ClientHelperImpl's captured-static twin). The pass fails fast on any load of a
+     *  SAM-param slot, so an arg-consuming impl can never be silently mis-adapted
+     *  (captured slots stay legal — they shift by 0, the prefix is unchanged).
+     *  Format: interfaceOwner|oldSamName|oldSamDesc -> newSamName|newSamDesc
+     *  (keys are FINAL-space: run after remapClass). */
+    void addIndySamRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#") || line.isBlank()) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad indysams line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 3 || val.length != 2) throw new IOException("bad indysams line: " + line);
+            indySams.put(key[0] + "|" + key[1] + "|" + key[2], val);
+        }
+    }
+
+    void rewriteIndySams(ClassNode cn) {
+        if (indySams.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            for (AbstractInsnNode n : mn.instructions) {
+                if (!(n instanceof InvokeDynamicInsnNode id)
+                        || id.bsm == null || id.bsmArgs == null || id.bsmArgs.length != 3
+                        || !"java/lang/invoke/LambdaMetafactory".equals(id.bsm.getOwner())
+                        || !"metafactory".equals(id.bsm.getName())
+                        || !(id.bsmArgs[0] instanceof org.objectweb.asm.Type samType)) {
+                    continue;
+                }
+                String iface = org.objectweb.asm.Type.getReturnType(id.desc).getInternalName();
+                String[] rule = indySams.get(iface + "|" + id.name + "|" + samType.getDescriptor());
+                if (rule == null) continue;
+                org.objectweb.asm.Type newSam = org.objectweb.asm.Type.getMethodType(rule[1]);
+                id.name = rule[0];
+                id.bsmArgs[0] = newSam;
+                id.bsmArgs[2] = newSam;
+                if (id.bsmArgs[1] instanceof Handle h) {
+                    org.objectweb.asm.Type oldImpl = org.objectweb.asm.Type.getMethodType(h.getDesc());
+                    org.objectweb.asm.Type[] oldArgs = oldImpl.getArgumentTypes();
+                    org.objectweb.asm.Type[] oldSamArgs = samType.getArgumentTypes();
+                    boolean virtual = h.getTag() != Opcodes.H_INVOKESTATIC;
+                    // the old impl args must END WITH the old SAM args (virtual impls:
+                    // exactly the SAM args - the captured receiver is the handle's owner)
+                    int captured = oldArgs.length - oldSamArgs.length;
+                    if (captured < 0 || (virtual && captured != 0)) {
+                        throw new IllegalStateException("indysams: impl desc " + h.getDesc()
+                                + " does not end with the old SAM args for " + cn.name);
+                    }
+                    for (int i = 0; i < oldSamArgs.length; i++) {
+                        if (!oldArgs[captured + i].equals(oldSamArgs[i])) {
+                            throw new IllegalStateException("indysams: impl desc " + h.getDesc()
+                                    + " does not end with the old SAM args for " + cn.name);
+                        }
+                    }
+                    // derived new impl desc: captured prefix + new SAM args
+                    org.objectweb.asm.Type[] newArgs = new org.objectweb.asm.Type[captured + newSam.getArgumentTypes().length];
+                    System.arraycopy(oldArgs, 0, newArgs, 0, captured);
+                    System.arraycopy(newSam.getArgumentTypes(), 0, newArgs, captured, newSam.getArgumentTypes().length);
+                    String newImplDesc = org.objectweb.asm.Type.getMethodDescriptor(
+                            newSam.getReturnType(), newArgs);
+                    MethodNode impl = null;
+                    for (MethodNode cand : cn.methods) {
+                        if (cand.name.equals(h.getName()) && cand.desc.equals(h.getDesc())) {
+                            impl = cand;
+                            break;
+                        }
+                    }
+                    if (impl == null) {
+                        throw new IllegalStateException("indysams: lambda impl " + h.getOwner()
+                                + "#" + h.getName() + h.getDesc() + " not in " + cn.name);
+                    }
+                    // SAM-param loads are illegal (captured slots stay legal: static
+                    // impl slots [0, captured) hold the prefix; virtual slot 0 is this)
+                    int maxCapturedSlot = virtual ? 0 : captured - 1;
+                    for (AbstractInsnNode i : impl.instructions) {
+                        if (i instanceof VarInsnNode v && v.var > maxCapturedSlot) {
+                            throw new IllegalStateException("indysams: lambda impl " + h.getOwner()
+                                    + "#" + h.getName() + " loads SAM parameter slot " + v.var
+                                    + " - the SAM-shape rewrite is only valid for arg-ignoring impls");
+                        }
+                    }
+                    impl.desc = newImplDesc;
+                    // the widened args must FIT into locals (ClassFormatError "Arguments
+                    // can't fit into locals", live boot): this + every widened arg slot
+                    int argSlots = 0;
+                    for (org.objectweb.asm.Type t : newArgs) argSlots += t.getSize();
+                    impl.maxLocals = Math.max(impl.maxLocals, (virtual ? 1 : 0) + argSlots);
+                    id.bsmArgs[1] = new Handle(h.getTag(), h.getOwner(), h.getName(), newImplDesc, h.isInterface());
+                }
+                indySamsApplied++;
+            }
+        }
     }
 
     void applyMemberRenames(ClassNode cn) {

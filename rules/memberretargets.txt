@@ -225,3 +225,38 @@ net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potio
 # lives on the per-mod PotionCompat shim as a synthetic direct Holder.
 net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|EMPTY -> @SHIM@/PotionCompat|Lnet/minecraft/core/Holder;|EMPTY
 net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/world/item/alchemy/Potion;|WATER -> net/minecraft/world/item/alchemy/Potions|Lnet/minecraft/core/Holder;|WATER
+
+# --- NBT item-tag removal wall (phase 5.13): the 1.20.5 data-component move -
+# the whole 1.20.1 ItemStack tag family is GONE on 21.1 (javap'd:
+# neoforge-21.1.250 ItemStack implements DataComponentHolder; no
+# getTag/getOrCreateTag/getTagElement/getOrCreateTagElement/addTagElement/
+# hasTag/setTag/save(CompoundTag)/of(CompoundTag) survive). Census (SRG-id
+# constant-pool scan + javap verification over the raw 1.20.1 jars):
+# 160 call sites / 82 classes (supp 145/75, ml 15/7), 0 declared overrides;
+# 2 Forge share-tag overrides (SelfQuiverItemMixin/SelfLunchBoxItemMixin) are
+# inert-but-must-link on 21.1 (nothing calls them there). ALL sites are
+# MECHANICAL under the tag-backed compatibility view: static-kind retargets to
+# the SHARED shim ItemStackTagCompat, whose view is DataComponents.CUSTOM_DATA
+# (the 1.21.1 "arbitrary NBT payload" component) - the ItemStack receiver rides
+# in as argument 1, operand stack identical, frames untouched (the DFU 6->8
+# precedent). SHARED (owner moonlight, per rules/shims-shared.txt): both mods'
+# rules resolve the same fixed com/modbridge/shim/shared/ type, so the
+# cross-mod tag-bearing signatures (moonlight SoftFluidStack etc.) cannot
+# diverge (the 5.12 RecordItem lesson). Semantic remainder documented in the
+# trial doc: keys vanilla 21.1 reads from DEDICATED components ("display",
+# "BlockEntityTag" copy-in, "Fireworks", banner "Patterns", map "map"/
+# "generation") don't surface through vanilla systems from the view.
+net/minecraft/world/item/ItemStack|()Lnet/minecraft/nbt/CompoundTag;|getTag -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;|static
+net/minecraft/world/item/ItemStack|()Lnet/minecraft/nbt/CompoundTag;|getOrCreateTag -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/nbt/CompoundTag;|static
+net/minecraft/world/item/ItemStack|()Z|hasTag -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;)Z|static
+net/minecraft/world/item/ItemStack|(Lnet/minecraft/nbt/CompoundTag;)V|setTag -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/nbt/CompoundTag;)V|static
+net/minecraft/world/item/ItemStack|(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;|getTagElement -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;|static
+net/minecraft/world/item/ItemStack|(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;|getOrCreateTagElement -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;|static
+net/minecraft/world/item/ItemStack|(Ljava/lang/String;Lnet/minecraft/nbt/Tag;)V|addTagElement -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;Ljava/lang/String;Lnet/minecraft/nbt/Tag;)V|static
+net/minecraft/world/item/ItemStack|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/nbt/CompoundTag;|save -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/nbt/CompoundTag;|static
+net/minecraft/world/item/ItemStack|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/world/item/ItemStack;|of -> @SHIM-SHARED@/ItemStackTagCompat|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/world/item/ItemStack;|static
+# --- phase 5.13 pack lane: the Info-bearing 9-arg Pack.create overload (m_245512_,
+# POST-mapSrg name "create") is gone on 21.1 - retargeted to the SHIM-static
+# PackCompat.create (owner+desc swap; the call was already INVOKESTATIC so the
+# kind "static" re-statement is a no-op on the opcode and no receiver moves).
+net/minecraft/server/packs/repository/Pack|(Ljava/lang/String;Lnet/minecraft/network/chat/Component;ZLnet/minecraft/server/packs/repository/Pack$ResourcesSupplier;Lnet/minecraft/server/packs/repository/Pack$Info;Lnet/minecraft/server/packs/PackType;Lnet/minecraft/server/packs/repository/Pack$Position;ZLnet/minecraft/server/packs/repository/PackSource;)Lnet/minecraft/server/packs/repository/Pack;|create -> @SHIM@/PackCompat|(Ljava/lang/String;Lnet/minecraft/network/chat/Component;ZLnet/minecraft/server/packs/repository/Pack$ResourcesSupplier;Lnet/minecraft/server/packs/repository/Pack$Metadata;Lnet/minecraft/server/packs/PackType;Lnet/minecraft/server/packs/repository/Pack$Position;ZLnet/minecraft/server/packs/repository/PackSource;)Lnet/minecraft/server/packs/repository/Pack;|static

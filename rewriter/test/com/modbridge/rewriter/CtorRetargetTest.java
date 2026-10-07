@@ -68,6 +68,7 @@ public final class CtorRetargetTest {
         straightLineSite();
         framesInsideArgRegion();
         nestedNewUntouched();
+        checkcastInArgRegion();
         otherCtorDescUntouched();
         shimOwnerResolution();
         unresolvedShimOwnerFailsFast();
@@ -93,6 +94,11 @@ public final class CtorRetargetTest {
         interfaceCallSites();
         interfaceInventoryMissingFileTolerated();
         indySamNameRemap();
+        indySamShapeRewrite();
+        indySamCapturedStatic();
+        indySamArgLoadFailsFast();
+        metadataSectionOverrideFix();
+        metadataSectionOverrideUntouchedElsewhere();
         superSwapMechanism();
         fieldRetargetMechanism();
     }
@@ -246,6 +252,52 @@ public final class CtorRetargetTest {
         check(countInsns(mn, n -> n instanceof MethodInsnNode m
                 && m.getOpcode() == Opcodes.INVOKESPECIAL
                 && OLD_OWNER.equals(m.owner)) == 1, "original INVOKESPECIAL still present");
+    }
+
+    /**
+     * phase 5.13 regression: a CHECKCAST (or INSTANCEOF/ANEWARRAY) INSIDE the ctor
+     * argument region must not abort the forward scan. Live boot: moonlight
+     * DynamicResourcePack.lambda$registerPack$2 builds
+     * {@code new Pack.Info(supplier.get() CAST PackMetadataSection).description(),
+     * .packFormat(), ...)} — the arg region's checkcast stopped the old
+     * any-TypeInsnNode scan, the Pack$Info rule never fired and the removed ctor
+     * stayed in the bytecode (CNFE at class-load). Shape mirrors that site.
+     */
+    void checkcastInArgRegion() throws IOException {
+        Rewriter r = rewriterWithRule();
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "make", "()Ljava/lang/Object;", null, null);
+        mn.maxStack = 6;
+        mn.maxLocals = 0;
+        mn.instructions.add(new TypeInsnNode(Opcodes.NEW, OLD_OWNER));
+        mn.instructions.add(new InsnNode(Opcodes.DUP));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "test/Src", "get",
+                "()Ljava/lang/Object;", false));        // returns Object
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, "test/Arg")); // the cast
+        mn.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, OLD_OWNER));  // trailing cast, same type
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(new LdcInsnNode("f"));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                OLD_OWNER, "<init>", OLD_DESC, false));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        r.rewriteCtorRetargets(cn);
+        MethodNode out = cn.methods.get(0);
+        check(r.ctorRetargetsApplied == 1,
+                "checkcast-in-args site retargeted (counter=1; the old scan bailed)");
+        check(countInsns(out, n -> n.getOpcode() == Opcodes.INVOKESPECIAL) == 0,
+                "INVOKESPECIAL gone despite the arg-region casts");
+        check(countInsns(out, n -> n.getOpcode() == Opcodes.CHECKCAST) == 2,
+                "both arg-region casts untouched (args flow through verbatim)");
+        MethodInsnNode iv = first(out, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKEVIRTUAL && NEW_OWNER.equals(m.owner));
+        check(iv != null && "registerConfig".equals(iv.name),
+                "INVOKEVIRTUAL registerConfig inserted after the cast args");
     }
 
     void otherCtorDescUntouched() throws IOException {
@@ -536,6 +588,216 @@ public final class CtorRetargetTest {
         InvokeDynamicInsnNode id2 = first(mn2, InvokeDynamicInsnNode.class, x -> true);
         check(id2 != null && id2.name.equals("run"),
                 "non-SRG indy names pass through (java-interface lambdas unaffected)");
+    }
+
+    // ------------------------------------------- indy SAM SHAPE rewrites (indysams.txt)
+
+    static final String SUPPLIER_IFACE = "net/minecraft/server/packs/repository/Pack$ResourcesSupplier";
+    static final String OPEN_FULL_DESC = "(Lnet/minecraft/server/packs/PackLocationInfo;"
+            + "Lnet/minecraft/server/packs/repository/Pack$Metadata;)Lnet/minecraft/server/packs/PackResources;";
+
+    /** mirrors the real pipeline order: remapClass (indy name m_247679_ -> "open",
+     *  bsm types final-space) then rewriteIndySams (final-space keys). */
+    ClassNode resourcesSupplierHost(Rewriter r, String implDesc, boolean implLoadsArg) throws IOException {
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Host";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PROTECTED, "registerPack", "()V", null, null);
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new InvokeDynamicInsnNode("m_247679_",
+                "(Ltest/Host;)L" + SUPPLIER_IFACE + ";",
+                new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+                        "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                                + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;"
+                                + "Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;"
+                                + ")Ljava/lang/invoke/CallSite;", false),
+                org.objectweb.asm.Type.getType(
+                        "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;"),
+                new Handle(Opcodes.H_INVOKEVIRTUAL, "test/Host", "lambda$registerPack$1",
+                        implDesc, false),
+                org.objectweb.asm.Type.getType(
+                        "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;")));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        MethodNode impl = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC,
+                "lambda$registerPack$1", implDesc, null, null);
+        if (implLoadsArg) impl.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        impl.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        impl.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(impl);
+        r.remapClass(cn);
+        r.rewriteIndySams(cn);
+        return cn;
+    }
+
+    void indySamShapeRewrite() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules")); // the shipped indysams.txt
+        ClassNode cn = resourcesSupplierHost(r,
+                "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;", false);
+        InvokeDynamicInsnNode id = first(cn.methods.get(0), InvokeDynamicInsnNode.class, x -> true);
+        check(id != null && "openFull".equals(id.name),
+                "indysams: indy name open -> openFull (the SAM the 21.1 runtime dispatches)");
+        check(id.bsmArgs[0] instanceof org.objectweb.asm.Type t
+                        && OPEN_FULL_DESC.equals(t.getDescriptor())
+                        && id.bsmArgs[2] instanceof org.objectweb.asm.Type t2
+                        && OPEN_FULL_DESC.equals(t2.getDescriptor()),
+                "indysams: samMethodType + instantiatedMethodType both follow the 21.1 SAM");
+        Handle h = (Handle) id.bsmArgs[1];
+        check(OPEN_FULL_DESC.equals(h.getDesc()),
+                "indysams: impl handle desc widened to the 21.1 shape");
+        MethodNode impl = cn.methods.get(1);
+        check(impl.name.equals("lambda$registerPack$1") && OPEN_FULL_DESC.equals(impl.desc),
+                "indysams: the lambda impl method's declared desc follows the handle");
+        check(impl.maxLocals >= 3,
+                "indysams: impl maxLocals grew to fit the widened args (no ClassFormatError)");
+        check(r.indySamsApplied == 1, "indysams: applied counter = 1");
+    }
+
+    void indySamArgLoadFailsFast() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        try {
+            resourcesSupplierHost(r,
+                    "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;", true);
+            check(false, "indysams: arg-loading impl rejected (fail fast, never mis-adapted)");
+        } catch (IllegalStateException expected) {
+            check(true, "indysams: arg-loading impl rejected (fail fast, never mis-adapted)");
+        }
+    }
+
+    /** the ClientHelperImpl shape: a STATIC impl with a CAPTURED prefix
+     *  (PathPackResources in the real site) + the String SAM arg. The captured prefix
+     *  must survive the desc derivation and loading it stays legal. */
+    void indySamCapturedStatic() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        ClassNode cn = new ClassNode();
+        cn.name = "test/Captured";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_STATIC, "reg", "()V", null, null);
+        mn.instructions.add(new InvokeDynamicInsnNode("m_247679_",
+                "()L" + SUPPLIER_IFACE + ";",
+                new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+                        "metafactory", "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
+                                + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;"
+                                + "Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;"
+                                + ")Ljava/lang/invoke/CallSite;", false),
+                org.objectweb.asm.Type.getType(
+                        "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;"),
+                new Handle(Opcodes.H_INVOKESTATIC, "test/Captured", "lambda$reg$16",
+                        "(Ltest/CapturedPack;Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;", false),
+                org.objectweb.asm.Type.getType(
+                        "(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;")));
+        mn.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(mn);
+        MethodNode impl = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_SYNTHETIC | Opcodes.ACC_STATIC,
+                "lambda$reg$16", "(Ltest/CapturedPack;Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources;",
+                null, null);
+        impl.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0)); // the CAPTURED pack - legal
+        impl.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(impl);
+        r.remapClass(cn);
+        r.rewriteIndySams(cn);
+        InvokeDynamicInsnNode id = first(mn, InvokeDynamicInsnNode.class, x -> true);
+        check("openFull".equals(id.name), "indysams captured-static: name rewritten");
+        Handle h = (Handle) id.bsmArgs[1];
+        check(h.getDesc().equals("(Ltest/CapturedPack;" + OPEN_FULL_DESC.substring(1)),
+                "indysams captured-static: derived desc keeps the captured prefix + new SAM args");
+        MethodNode impl2 = cn.methods.get(1);
+        check(impl2.desc.equals(h.getDesc()),
+                "indysams captured-static: declared impl desc follows");
+    }
+
+    // ------------------------------------------- getMetadataSection override surgery
+
+    static final String DRP = "net/mehvahdjukaar/moonlight/api/resources/pack/DynamicResourcePack";
+
+    /** the exact raw 1.20.1 body shape (javap'd): the always-true serializer
+     *  instanceof + the metadata SUPPLIER returned unwrapped. */
+    ClassNode metadataSectionHost(String className, String serializerDesc) {
+        ClassNode cn = new ClassNode();
+        cn.name = className;
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC, "getMetadataSection",
+                "(Lnet/minecraft/server/packs/metadata/MetadataSectionSerializer;)Ljava/lang/Object;",
+                null, null);
+        LabelNode lNull = new LabelNode();
+        LabelNode lEnd = new LabelNode();
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        mn.instructions.add(new TypeInsnNode(Opcodes.INSTANCEOF, serializerDesc));
+        mn.instructions.add(new JumpInsnNode(Opcodes.IFEQ, lNull));
+        mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETFIELD, className,
+                "metadata", "Ljava/util/function/Supplier;"));
+        mn.instructions.add(new JumpInsnNode(Opcodes.GOTO, lEnd));
+        mn.instructions.add(lNull);
+        // frame at the merge: stack [Supplier] (the goto path) - the pass must retype it
+        mn.instructions.add(new FrameNode(Opcodes.F_FULL, 0, new Object[]{},
+                1, new Object[]{"java/util/function/Supplier"}));
+        mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        mn.instructions.add(lEnd);
+        mn.instructions.add(new FrameNode(Opcodes.F_FULL, 0, new Object[]{},
+                1, new Object[]{"java/lang/Object"}));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(mn);
+        return cn;
+    }
+
+    void metadataSectionOverrideFix() {
+        Rewriter r = new Rewriter();
+        // production order: the serializer type was already typerenamed by remapClass
+        ClassNode cn = metadataSectionHost(DRP,
+                "net/minecraft/server/packs/metadata/MetadataSectionSerializer");
+        r.fixMetadataSectionOverride(cn);
+        MethodNode mn = cn.methods.get(0);
+        check(countInsns(mn, n -> n instanceof TypeInsnNode t && t.getOpcode() == Opcodes.INSTANCEOF) == 0,
+                "metaSection fix: the (gone) serializer instanceof is gone (renamed spelling)");
+        FieldInsnNode gs = first(mn, FieldInsnNode.class,
+                f -> f.getOpcode() == Opcodes.GETSTATIC
+                        && f.owner.equals("net/minecraft/server/packs/metadata/pack/PackMetadataSection"));
+        check(gs != null && "TYPE".equals(gs.name),
+                "metaSection fix: reference compare against PackMetadataSection.TYPE");
+        JumpInsnNode acmp = first(mn, JumpInsnNode.class, j -> j.getOpcode() == Opcodes.IF_ACMPNE);
+        check(acmp != null, "metaSection fix: IFEQ became IF_ACMPNE (equal stack depth, frames valid)");
+        check(countInsns(mn, i -> i instanceof VarInsnNode v
+                        && v.getOpcode() == Opcodes.ALOAD && v.var == 1) >= 1,
+                "metaSection fix: the ALOAD_1 comparand is kept (acmp pops two refs)");
+        check(mn.maxStack >= 2, "metaSection fix: maxStack grew for the two-ref compare");
+        MethodInsnNode get = first(mn, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKEINTERFACE && "get".equals(m.name)
+                        && "java/util/function/Supplier".equals(m.owner));
+        check(get != null, "metaSection fix: the Supplier field load is unwrapped with .get()");
+        int supplierFrames = count(mn, FrameNode.class,
+                fr -> fr.stack != null && fr.stack.contains("java/util/function/Supplier"));
+        int objectFrames = count(mn, FrameNode.class,
+                fr -> fr.stack != null && fr.stack.contains("java/lang/Object"));
+        check(supplierFrames == 0 && objectFrames >= 1,
+                "metaSection fix: the merge frame carries Object, not the Supplier");
+        // the raw 1.20.1 spelling (pre-typerename) matches too, for robustness
+        ClassNode raw = metadataSectionHost(DRP,
+                "net/minecraft/server/packs/metadata/pack/PackMetadataSectionSerializer");
+        r.fixMetadataSectionOverride(raw);
+        check(countInsns(raw.methods.get(0), n -> n instanceof TypeInsnNode
+                        && ((TypeInsnNode) n).getOpcode() == Opcodes.INSTANCEOF) == 0,
+                "metaSection fix: the raw spelling matches as well");
+    }
+
+    void metadataSectionOverrideUntouchedElsewhere() {
+        Rewriter r = new Rewriter();
+        ClassNode other = metadataSectionHost("some/other/Class",
+                "net/minecraft/server/packs/metadata/MetadataSectionSerializer");
+        r.fixMetadataSectionOverride(other); // no-op, no throw
+        MethodNode mn = other.methods.get(0);
+        check(countInsns(mn, n -> n instanceof TypeInsnNode
+                && ((TypeInsnNode) n).getOpcode() == Opcodes.INSTANCEOF) == 1,
+                "metaSection fix: other classes untouched (single measured site)");
     }
 
     // ------------------------------------------- superswap pass (enchantment lane)

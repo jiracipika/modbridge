@@ -804,6 +804,71 @@ public final class ShimFacadeTest {
         check(r.remapType("net/minecraft/world/item/RecordItem")
                         .equals("com/modbridge/shim/shared/RecordItem"),
                 "rules: RecordItem -> the SHARED Item-extending shim");
+        // phase 5.13: the NBT item-tag removal wall - 9 static-kind memberretargets
+        // route the whole 1.20.1 ItemStack tag family to the SHARED ItemStackTagCompat
+        // view (keys are POST-mapSrg mojmap names; descs are the 1.20.1 shapes)
+        String[][] tagRules = {
+                {"getTag", "()Lnet/minecraft/nbt/CompoundTag;"},
+                {"getOrCreateTag", "()Lnet/minecraft/nbt/CompoundTag;"},
+                {"hasTag", "()Z"},
+                {"setTag", "(Lnet/minecraft/nbt/CompoundTag;)V"},
+                {"getTagElement", "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;"},
+                {"getOrCreateTagElement", "(Ljava/lang/String;)Lnet/minecraft/nbt/CompoundTag;"},
+                {"addTagElement", "(Ljava/lang/String;Lnet/minecraft/nbt/Tag;)V"},
+                {"save", "(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/nbt/CompoundTag;"},
+                {"of", "(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/world/item/ItemStack;"},
+        };
+        for (String[] rule : tagRules) {
+            String key = "net/minecraft/world/item/ItemStack|" + rule[1] + "|" + rule[0];
+            String[] val = r.memberRetargets.get(key);
+            check(val != null && "@SHIM-SHARED@/ItemStackTagCompat".equals(val[0]) && "static".equals(val[2]),
+                    "rules: ItemStack." + rule[0] + " memberretarget -> SHARED static view");
+        }
+        check(r.resolveShimTarget("@SHIM-SHARED@/ItemStackTagCompat")
+                        .equals("com/modbridge/shim/shared/ItemStackTagCompat"),
+                "rules: @SHIM-SHARED@/ItemStackTagCompat resolves to the fixed shared package");
+        check(r.shims.containsKey("com/modbridge/shim/ItemStackTagCompat"),
+                "rules/shims: ItemStackTagCompat is in the shim manifest");
+        // injection: owner jar gets the shared shim at the fixed package; a consumer
+        // jar must NOT carry it (cross-mod read of moonlight's exported package)
+        Map<String, byte[]> ownerEntries = new HashMap<>();
+        r.initShimRoot("moonlight");
+        r.injectShims(ownerEntries);
+        check(ownerEntries.containsKey("com/modbridge/shim/shared/ItemStackTagCompat.class"),
+                "injectShims(): the OWNER jar (moonlight) carries the shared tag view at the fixed package");
+        Map<String, byte[]> consumerEntries = new HashMap<>();
+        r.initShimRoot("testmod");
+        r.injectShims(consumerEntries);
+        check(!consumerEntries.containsKey("com/modbridge/shim/shared/ItemStackTagCompat.class"),
+                "injectShims(): consumer jars do NOT carry the shared tag view (resolve cross-mod)");
+        // phase 5.13 pack lane: moonlight DynamicResourcePack's Pack.Info/create sites
+        // (live boot wall: CNFE Pack$Info at pack registration) -> the PackCompat shim
+        String infoKey = "net/minecraft/server/packs/repository/Pack$Info"
+                + "|(Lnet/minecraft/network/chat/Component;ILnet/minecraft/world/flag/FeatureFlagSet;)V";
+        String[] infoVal = r.ctorRetargets.get(infoKey);
+        check(infoVal != null && "@SHIM@/PackCompat".equals(infoVal[0]) && "INSTANCE".equals(infoVal[1])
+                        && "info".equals(infoVal[2]) && infoVal[3].endsWith("Lnet/minecraft/server/packs/repository/Pack$Metadata;"),
+                "rules: Pack$Info ctorretarget -> PackCompat.info returning the 21.1 Metadata record");
+        String pmsKey = "net/minecraft/server/packs/metadata/pack/PackMetadataSection"
+                + "|(Lnet/minecraft/network/chat/Component;I)V";
+        String[] pmsVal = r.ctorRetargets.get(pmsKey);
+        check(pmsVal != null && "metadataSection".equals(pmsVal[2]),
+                "rules: 2-arg PackMetadataSection ctorretarget -> PackCompat.metadataSection (+Optional)");
+        String createKey = "net/minecraft/server/packs/repository/Pack"
+                + "|(Ljava/lang/String;Lnet/minecraft/network/chat/Component;ZLnet/minecraft/server/packs/repository/Pack$ResourcesSupplier;Lnet/minecraft/server/packs/repository/Pack$Info;Lnet/minecraft/server/packs/PackType;Lnet/minecraft/server/packs/repository/Pack$Position;ZLnet/minecraft/server/packs/repository/PackSource;)Lnet/minecraft/server/packs/repository/Pack;|create";
+        String[] createVal = r.memberRetargets.get(createKey);
+        check(createVal != null && "@SHIM@/PackCompat".equals(createVal[0]) && "static".equals(createVal[2])
+                        && createVal[1].contains("Lnet/minecraft/server/packs/repository/Pack$Metadata;"),
+                "rules: 9-arg Pack.create memberretarget -> static PackCompat.create (Metadata desc)");
+        check(r.memberRenames.get(
+                        "net/minecraft/server/packs/metadata/pack/PackMetadataSection|()Lnet/minecraft/network/chat/Component;|getDescription")
+                != null,
+                "rules: PackMetadataSection.getDescription renamed to the 21.1 record accessor");
+        check("net/minecraft/server/packs/metadata/MetadataSectionSerializer".equals(
+                        r.remapType("net/minecraft/server/packs/metadata/pack/PackMetadataSectionSerializer")),
+                "rules: PackMetadataSectionSerializer instanceof target -> the surviving interface");
+        check(r.shims.containsKey("com/modbridge/shim/PackCompat"),
+                "rules/shims: PackCompat is in the shim manifest");
         check(r.remapType("net/minecraftforge/common/crafting/IIngredientSerializer")
                         .equals("com/modbridge/shim/testmod/IIngredientSerializer"),
                 "rules: IIngredientSerializer -> interface shim");

@@ -1,0 +1,134 @@
+# phase 5.13 — the NBT item-tag removal wall falls; the ladder crosses the pack lane into runtime resource generation (2026-10-07)
+
+Matrix 16/16 at close. All unit gates green: ctor-retarget 3/3 (278 checks),
+shims 3/3 (265 facade + 22 item-tag-view checks), refmap 3/3 (32), srg-resolver
+4/4 (20), linkie cross-check clean (exit 0, all cached ids agree with
+namespace mojang_srg@1.20.1).
+
+## THE CENSUS (re-measured this slice, ASM instruction-level over the RAW jars)
+
+supplementaries-1.20-3.1.38.jar: 145 call sites / 67 classes.
+moonlight-1.20-2.16.10-forge.jar: 15 call sites / 7 classes.
+TOTAL 160 sites / 74 classes, 0 declared overrides (verified: no method in either
+jar declares a member named with the 9 tag-family SRG ids). Every measured site's
+receiver OWNER is exactly net/minecraft/world/item/ItemStack (no subclass-owner
+sites), so the 9 static-kind memberretargets cover the family completely. Per-id
+spread (supp): getTag 39, getTagElement 28, getOrCreateTag 18, addTagElement 18,
+setTag 12, hasTag 10, getOrCreateTagElement 6, save 6, of 8. The banked "82
+classes" figure used a looser class-axis count; the site axis (160) is exact.
+Ground truth for save/of ids taken off the 1.20.1 srg ItemStack class:
+m_41739_=save, m_41712_=of (the table is name-keyed, ids pinned by javap).
+
+## WHAT FELL (the tag wall itself, then the three walls it uncovered behind it)
+
+1. THE TAG FAMILY (the slice): 9 static-kind memberretargets to the SHARED shim
+   ItemStackTagCompat (rules/shims-shared.txt: ItemStackTagCompat=moonlight;
+   owner jar carries com/modbridge/shim/shared/ItemStackTagCompat, consumer jars
+   read it cross-mod). The view is DataComponents.CUSTOM_DATA (vanilla 21.1's
+   arbitrary-payload component): getTag/getOrCreateTag/hasTag/setTag/
+   getTagElement/getOrCreateTagElement/addTagElement/save/of, shapes byte-exact
+   (bytecode ground truth of m_41783_/m_41784_/m_41782_/m_41751_/m_41737_/
+   m_41698_/m_41700_; save re-encodes the empty stack in the 1.20.1 air shape
+   because 21.1's two-arg save THROWS on empty; 21.1 save RETURNS a new tag —
+   DFU NbtOps immutability — the call sites measured save+of through this pair).
+   PROOF (own-JVM ItemTagViewTest, 22 checks, platform jars first): live
+   CUSTOM_DATA round-trips (write-then-read through the live CustomData tag,
+   getOrCreateTagElement attachment semantics, setTag(null) clears, save+of
+   round-trip preserves the tag view, empty-stack encoding).
+2. 5.12's wall (supp BuntingItem.setColor getOrCreateTag NSFE in CommonSetup) is
+   GONE — no trace in any boot after the rules landed.
+3. Fireworks lane (uncovered by the tag fix): 1.20.1's nested enum
+   FireworkRocketItem$Shape is GONE on 21.1 (CNFE at supp ModSetup lambda$static$0,
+   the ENDERMAN_SKULL_ITEM creeper-shape registration). Pure typerename ->
+   net/minecraft/world/item/component/FireworkExplosion$Shape (same 5 constant
+   names; vanilla FireworkStarRecipe.SHAPE_BY_ITEM survives). 5 classes across
+   both mods remap consistently (moonlight's cross-mod
+   RegHelper.registerFireworkRecipe(Shape,Item) signature included).
+4. Pack lane (moonlight DynamicResourcePack/ClientHelperImpl, CNFE
+   Pack$Info at pack registration): 21.1 split Pack.Info + the 9-arg
+   Pack.create into PackLocationInfo/Pack.Metadata/PackSelectionConfig around a
+   now-public Pack ctor. PackCompat shim (per-mod): ctorretargets
+   Pack$Info.<init>(Component,int,FeatureFlagSet) -> PackCompat.info (builds the
+   21.1 Metadata record; the pack-format int is decorative on the dedicated
+   server — compatibility set COMPATIBLE statically, documented) and
+   PackMetadataSection.<init>(Component,int) -> PackCompat.metadataSection
+   (+Optional.empty); memberretarget of the Info-bearing 9-arg create ->
+   static PackCompat.create. 2-arg PackMetadataSection accessors renamed
+   (getDescription->description, getPackFormat->packFormat; memberrenames).
+   RESULT: "Found new data pack Supplementaries Generated Pack, loading it
+   automatically" — the pack is BUILT and the repository accepts it.
+5. Indy SAM shape: 1.20.1 Pack.ResourcesSupplier.open(String) is GONE on 21.1
+   (split openPrimary/openFull(PackLocationInfo, Pack$Metadata)); the lambda class
+   implemented neither (AbstractMethodError when readMetaAndCreate dispatched
+   openFull at the repository reload). NEW MECHANISM rules/indysams.txt: rewrites
+   the indy name, both bsm MethodTypes, and DERIVES the lambda impl desc per site
+   (captured-arg prefix kept + new SAM args; validated: the old impl desc must end
+   with the old SAM args). Fail-fast guard: an impl that LOADS a SAM-parameter
+   slot aborts translation (never mis-adapted; captured slots stay legal —
+   measured bodies return the captured pack). maxLocals recomputed for the
+   widened args (ClassFormatError "Arguments can't fit into locals" caught by the
+   boot). 2 live sites (DynamicResourcePack virtual captured-this lambda +
+   ClientHelperImpl captured-static lambda, both (String)->return-the-capture).
+6. getMetadataSection override body (moonlight DynamicResourcePack, CCE
+   Supplier->ResourceFilterSection then PackMetadataSection->ResourceFilterSection):
+   the raw body was doubly 1.20.1-shaped — always-true instanceof against the
+   (renamed-away) concrete serializer AND it returned the metadata SUPPLIER FIELD,
+   not .get(). 21.1 vanilla queries BOTH the pack section (readMetaAndCreate
+   needs the real PackMetadataSection) and the filter section (casts to
+   ResourceFilterSection). fixMetadataSectionOverride: single-site pinned pass —
+   [ALOAD_1, INSTANCEOF, IFEQ] -> [ALOAD_1, GETSTATIC PackMetadataSection.TYPE,
+   IF_ACMPNE] (net stack depth 0; maxStack bumped; the merge frame's Supplier
+   entry retyped Object) + INVOKEINTERFACE Supplier.get after the field load.
+   21.1 semantic: arg == TYPE ? metadata.get() : null.
+7. RL ctor scan bug (same class as the 5.13 ctorretarget scan bug, both found by
+   this boot): the forward NEW+DUP scan aborted at ANY TypeInsnNode —
+   ResType's arg region contains an ANEWARRAY (String.format varargs) so the site
+   kept `new ResourceLocation(ns, path)`, which 21.1 made PRIVATE ->
+   IllegalAccessError at the resource-gen lane. Scan now stops only at nested NEW
+   (both rewriteResourceLocationCtors and rewriteCtorRetargets; regression tests
+   added for both).
+
+## LADDER RESULT (final boot, evidence: testenv/server-121/logs/latest.log +
+console-server-121.log, 15:16 boot)
+
+Both containers construct; ALL registry events dispatch; configs load through
+FML's own pipeline; CommonSetup completes; the pack lane runs end to end
+("Found new data pack Supplementaries Generated Pack", repository reload, metadata
+sections queried) and moonlight's runtime resource generation SUCCEEDS:
+  [Moonlight/]: Finished runtime resources generation for 1 packs in a total of 10 ms
+
+THE NEXT WALL (precisely scoped, moonlight-only): during the datapack parse that
+follows, vanilla's placement-modifier codec dispatch hits
+  java.lang.AbstractMethodError: net.mehvahdjukaar.moonlight.core.misc.CaveFilter$Type
+  does not define or inherit 'abstract com.mojang.serialization.MapCodec codec()'
+  of interface net.minecraft.world.level.levelgen.placement.PlacementModifierType
+(inside KeyDispatchCodec.decode, vanilla JSON ops — i.e. 21.1 changed
+PlacementModifierType.codec()'s RETURN TYPE from Codec to MapCodec; moonlight's
+override still returns a Codec so it no longer overrides). Census: 3 classes in
+moonlight reference PlacementModifierType, 0 in supp. The fix is a SEMANTIC codec
+conversion (the impl must build a RecordCodecBuilder MapCodec, or the override's
+desc + return shape must be rewritten with a wrapper — an override-desc-rewrite
+mechanism that does not exist yet). Phase 5.14 head-of-list, together with the
+remaining semantic drift documented in the ItemStackTagCompat javadoc (vanilla
+keys that moved to DEDICATED components: "display", "BlockEntityTag" copy-in,
+"Fireworks", banner "Patterns", map "map"/"generation" do not surface from the
+CUSTOM_DATA view through vanilla systems).
+
+## Gates at close
+
+- unit: ctor-retarget 3/3 (278 checks: +6 checkcast-in-args ctorretarget scan,
+  +4 indy SAM shape, +1 captured-static, +1 arg-load fail-fast, +7 metaSection,
+  +1 maxStack), shims 3/3 (265 + 22; 70 shims + 2 shared: ItemStackTagCompat,
+  PackCompat), refmap 3/3, srg-resolver 4/4, linkie clean.
+- matrix: 16/16 (the matrix resets mods/source-1201 to the fixture — re-copy the
+  trial jars before a trial boot).
+- rcon: NOT reached this phase (the server does not reach Done; the ladder stops
+  at the placement-modifier codec wall during datapack parse — honest partial).
+- RUNBOOK additions: (1) a pinned single-site pass must fail fast when its shape
+  drifts AND its typerename interactions must be matched BOTH before and after
+  remapClass spellings (the metaSection instanceof matched only the renamed
+  spelling on the first attempt); (2) instruction-swap surgeries must restate
+  maxStack/maxLocals (this slice: two live VerifyErrors/ClassFormatError caught
+  by boots, both now pinned by unit checks); (3) the ctorretarget/RL-rewrite
+  forward scans stop at nested NEW only — non-NEW type instructions in arg
+  regions (checkcast/anewarray/instanceof) are legal arg shapes.

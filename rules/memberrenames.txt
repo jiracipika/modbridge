@@ -55,3 +55,7 @@ net/minecraft/world/item/Item$Properties|(I)Lnet/minecraft/world/item/Item$Prope
 # stringResolver (the 5.9 vanilla-class renames never covered DFU-internal moves;
 # the SRG table maps m_184405_ to the stale 1.20.1 mojmap name).
 net/minecraft/util/ExtraCodecs|(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;|stringResolverCodec=stringResolver
+# --- phase 5.13 pack lane: PackMetadataSection became a record on 21.1 - its
+# accessors renamed (the Info-build path reads description + packFormat).
+net/minecraft/server/packs/metadata/pack/PackMetadataSection|()Lnet/minecraft/network/chat/Component;|getDescription=description
+net/minecraft/server/packs/metadata/pack/PackMetadataSection|()I|getPackFormat=packFormat

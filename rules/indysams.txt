@@ -1,0 +1,19 @@
+# Indy SAM shape rewrites: vanilla functional interfaces whose SAM changed
+# NAME+SHAPE across versions. The metafactory resolves the SAM BY NAME at indy
+# bootstrap and the generated lambda class must implement the abstract the runtime
+# dispatches, else AbstractMethodError at the call.
+#
+# Format: interfaceOwner|oldSamName|oldSamDesc -> newSamName|newSamDesc
+# (keys FINAL-space: post-mapSrg indy name, final-space types; run after remapClass.
+# The lambda impl's new desc is DERIVED per site: captured-arg prefix + new SAM args;
+# the pass validates the old impl ends with the old SAM args and fails fast if the
+# body ever loads a SAM-parameter slot.)
+#
+# --- phase 5.13 pack lane: 1.20.1 Pack.ResourcesSupplier.open(String id) is GONE on
+# 21.1 - split into openPrimary(PackLocationInfo) / openFull(PackLocationInfo,
+# Pack$Metadata); neoforge's readMetaAndCreate dispatches openFull (live-boot AME at
+# the PackRepository reload of moonlight DynamicResourcePack's registered pack). The
+# lambda impl ignores its argument and returns the captured pack (aload_0; areturn,
+# javap'd) - the desc widening is stack/locals-neutral; the pass fails fast if an
+# impl ever loads a parameter.
+net/minecraft/server/packs/repository/Pack$ResourcesSupplier|open|(Ljava/lang/String;)Lnet/minecraft/server/packs/PackResources; -> openFull|(Lnet/minecraft/server/packs/PackLocationInfo;Lnet/minecraft/server/packs/repository/Pack$Metadata;)Lnet/minecraft/server/packs/PackResources;

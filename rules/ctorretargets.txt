@@ -46,3 +46,12 @@ net/minecraftforge/fml/config/ModConfig|(Lnet/minecraftforge/fml/config/ModConfi
 # runtime - its consumer override is never dispatched - but the clinit executes at
 # item registration and the NSME kills the event).
 net/minecraft/world/entity/ai/attributes/AttributeModifier|(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)V -> @SHIM@/AttributeModifierCompat|INSTANCE|create|(Ljava/util/UUID;Ljava/lang/String;DLnet/minecraft/world/entity/ai/attributes/AttributeModifier$Operation;)Lnet/minecraft/world/entity/ai/attributes/AttributeModifier;
+
+# --- phase 5.13: moonlight's dynamic-resource-pack lane (live boot wall: CNFE
+# net.minecraft.server.packs.repository.Pack$Info at supp/ml CommonSetup-pack
+# registration). 1.20.1's Pack.Info record and the 2-arg PackMetadataSection ctor
+# are GONE on 21.1 (metadata rework split them into Pack.Metadata /
+# PackLocationInfo / PackSelectionConfig). Ctor-retargets to the PackCompat shim
+# (the 9-arg Pack.create overload rides memberretargets.txt; same lane).
+net/minecraft/server/packs/repository/Pack$Info|(Lnet/minecraft/network/chat/Component;ILnet/minecraft/world/flag/FeatureFlagSet;)V -> @SHIM@/PackCompat|INSTANCE|info|(Lnet/minecraft/network/chat/Component;ILnet/minecraft/world/flag/FeatureFlagSet;)Lnet/minecraft/server/packs/repository/Pack$Metadata;
+net/minecraft/server/packs/metadata/pack/PackMetadataSection|(Lnet/minecraft/network/chat/Component;I)V -> @SHIM@/PackCompat|INSTANCE|metadataSection|(Lnet/minecraft/network/chat/Component;I)Lnet/minecraft/server/packs/metadata/pack/PackMetadataSection;
