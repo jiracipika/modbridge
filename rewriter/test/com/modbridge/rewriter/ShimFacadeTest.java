@@ -61,6 +61,7 @@ public final class ShimFacadeTest {
         lootShimExactness();
         conditionShimExactness();
         criteriaShimExactness();
+        dispenserShimExactness();
         dataResultShimExactness();
         networkShimExactness();
         effectsLaneShimExactness();
@@ -454,6 +455,166 @@ public final class ShimFacadeTest {
         check(rlcText.contains("tryParse")
                         && rlcText.contains("(Ljava/lang/String;)Lnet/minecraft/resources/ResourceLocation;"),
                 "isValid: ports to ResourceLocation.tryParse(s) != null (bytecode)");
+    }
+
+    // ------------------------------------- dispenser template shim (phase 5.15)
+
+    /**
+     * AbstractProjectileDispenseBehavior: 1.20.1's abstract extend-and-override
+     * dispenser projectile template, removed on 21.1 (the data-driven
+     * ProjectileDispenseBehavior(Item) requires the ITEM to implement ProjectileItem
+     * and cannot carry a mod behavior overriding getProjectile to build CUSTOM
+     * entities). The shim extends the REAL 21.1 DefaultDispenseItemBehavior and
+     * reimplements the 1.20.1 template (bytecode-measured) over the 21.1 surface;
+     * the hook descriptors do not drift (identical internal types both sides).
+     * Measured referrers: supp BombsBehavior (getProjectile/getUncertainty/getPower
+     * overrides), DispenserBehaviorsManager$2 (getProjectile only), the
+     * AbstractProjectileBehaviorAccessor @Mixin (4 explicit-value @Invoker proxies).
+     * execute() itself cannot run outside a server env (needs a ServerLevel); the
+     * hook defaults, the override surface and the template body's 21.1 call targets
+     * are proven here — the live boot is the semantic gate.
+     */
+    void dispenserShimExactness() throws Exception {
+        Class<?> shim = net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior.class;
+        check(java.lang.reflect.Modifier.isAbstract(shim.getModifiers()),
+                "AbstractProjectileDispenseBehavior shim: abstract (1.20.1 parity)");
+        check(shim.getSuperclass() == net.minecraft.core.dispenser.DefaultDispenseItemBehavior.class,
+                "AbstractProjectileDispenseBehavior shim: extends the REAL 21.1 DefaultDispenseItemBehavior");
+        check(net.minecraft.core.dispenser.DispenseItemBehavior.class.isAssignableFrom(shim),
+                "AbstractProjectileDispenseBehavior subclasses: IS-A DispenseItemBehavior (registry dispatch)");
+        check(shim.getDeclaredConstructor() != null,
+                "AbstractProjectileDispenseBehavior.<init>()V: the subclass super-ctor surface");
+
+        // the template method: PUBLIC override of the 21.1 protected execute —
+        // the exact 1.20.1 m_7498_ visibility widening
+        Method exec = shim.getDeclaredMethod("execute",
+                net.minecraft.core.dispenser.BlockSource.class, net.minecraft.world.item.ItemStack.class);
+        check(java.lang.reflect.Modifier.isPublic(exec.getModifiers()),
+                "execute: public (1.20.1 m_7498_ widening of the 21.1 protected template hook)");
+        check(exec.getDeclaringClass() == shim,
+                "execute: DECLARED here (overrides, not inherited)");
+        check(typeStr(exec).equals(
+                        "(Lnet/minecraft/core/dispenser/BlockSource;Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/ItemStack;"),
+                "execute desc = the 1.20.1 m_7498_ surface exactly");
+
+        // the abstract hook every translated subclass overrides
+        Method gp = shim.getDeclaredMethod("getProjectile",
+                net.minecraft.world.level.Level.class, net.minecraft.core.Position.class,
+                net.minecraft.world.item.ItemStack.class);
+        check(java.lang.reflect.Modifier.isAbstract(gp.getModifiers())
+                        && java.lang.reflect.Modifier.isProtected(gp.getModifiers()),
+                "getProjectile: protected abstract (1.20.1 m_6895_)");
+        check(typeStr(gp).equals(
+                        "(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/Position;Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/entity/projectile/Projectile;"),
+                "getProjectile desc = the 1.20.1 m_6895_ surface exactly (no drift: same internal types both sides)");
+
+        // concrete hook defaults + playSound
+        check(desc(shim, "getUncertainty").equals("()F"), "getUncertainty: ()F (1.20.1 m_7101_)");
+        check(desc(shim, "getPower").equals("()F"), "getPower: ()F (1.20.1 m_7104_)");
+        Method ps = shim.getDeclaredMethod("playSound", net.minecraft.core.dispenser.BlockSource.class);
+        check(java.lang.reflect.Modifier.isProtected(ps.getModifiers()) && ps.getDeclaringClass() == shim,
+                "playSound: protected override of DefaultDispenseItemBehavior (1.20.1 m_6823_)");
+
+        // LIVE verifier + hook defaults: translated-shaped subclasses define, link
+        // and dispatch against the shim (the JVM verifier checks every override's
+        // args vs the shim's declared descs at link time — the 5.11 desc-drift
+        // discipline, exercised for real).
+        class ManagerArrowShape extends net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior {
+            ManagerArrowShape() { }                       // $2 shape: getProjectile only
+            @Override
+            protected net.minecraft.world.entity.projectile.Projectile getProjectile(
+                    net.minecraft.world.level.Level level, net.minecraft.core.Position position,
+                    net.minecraft.world.item.ItemStack stack) {
+                return null;
+            }
+        }
+        class BombsShape extends net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior {
+            BombsShape() { }                              // BombsBehavior shape: 3 overrides
+            @Override
+            protected net.minecraft.world.entity.projectile.Projectile getProjectile(
+                    net.minecraft.world.level.Level level, net.minecraft.core.Position position,
+                    net.minecraft.world.item.ItemStack stack) {
+                return null;
+            }
+            @Override
+            protected float getUncertainty() { return 2.5F; }
+            @Override
+            protected float getPower() { return 1.9F; }
+        }
+        ManagerArrowShape two = new ManagerArrowShape();
+        BombsShape bombs = new BombsShape();
+        check(two instanceof net.minecraft.core.dispenser.DispenseItemBehavior,
+                "$2-shaped subclass: constructs and IS-A DispenseItemBehavior");
+        Method getUncM = shim.getDeclaredMethod("getUncertainty");
+        Method getPowM = shim.getDeclaredMethod("getPower");
+        getUncM.setAccessible(true);   // protected hook: the test caller is not a subclass
+        getPowM.setAccessible(true);
+        check(((Number) getUncM.invoke(two)).floatValue() == 6.0F,
+                "getUncertainty default = 6.0F (1.20.1 parity) dispatches through the inherited hook");
+        check(((Number) getPowM.invoke(two)).floatValue() == 1.1F,
+                "getPower default = 1.1F (1.20.1 parity)");
+        check(((Number) getUncM.invoke(bombs)).floatValue() == 2.5F,
+                "BombsBehavior-shaped override dispatches (virtual, not shadowed)");
+        check(((Number) getPowM.invoke(bombs)).floatValue() == 1.9F,
+                "BombsBehavior-shaped getPower override dispatches");
+
+        // the accessor mixin's 4 EXPLICIT @Invoker values must resolve by name
+        for (String invoker : new String[]{"getUncertainty", "getPower", "getProjectile", "playSound"}) {
+            boolean found = false;
+            for (Method m : shim.getDeclaredMethods()) {
+                if (m.getName().equals(invoker)) { found = true; break; }
+            }
+            check(found, "@Invoker(\"" + invoker + "\"): value resolves against the shim");
+        }
+
+        // the template body's 21.1 call targets, from the compiled carrier bytes:
+        // every owner/name/desc the execute+playSound bodies reference must be a
+        // REAL 21.1 member (link-time proof; the 1.20.1 body's srg ids renamed to
+        // exactly these).
+        ClassNode scn = new ClassNode();
+        new ClassReader(java.nio.file.Files.readAllBytes(
+                Path.of("rules/shims/net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior.class")))
+                .accept(scn, 0);
+        MethodNode execNode = scn.methods.stream()
+                .filter(m -> m.name.equals("execute")).findFirst().orElseThrow();
+        java.util.List<String> calls = new java.util.ArrayList<>();
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        java.util.List<Object> consts = new java.util.ArrayList<>();
+        for (org.objectweb.asm.tree.AbstractInsnNode n : execNode.instructions) {
+            if (n instanceof org.objectweb.asm.tree.MethodInsnNode mi) {
+                calls.add(mi.owner + "." + mi.name + mi.desc);
+            } else if (n instanceof org.objectweb.asm.tree.FieldInsnNode fi) {
+                fields.add(fi.owner + "." + fi.name + ":" + fi.desc);
+            } else if (n instanceof org.objectweb.asm.tree.LdcInsnNode l) {
+                consts.add(l.cst);
+            }
+        }
+        check(calls.contains("net/minecraft/core/dispenser/BlockSource.level()Lnet/minecraft/server/level/ServerLevel;"),
+                "execute: source.level() (21.1 record accessor)");
+        check(calls.contains("net/minecraft/world/level/block/DispenserBlock.getDispensePosition(Lnet/minecraft/core/dispenser/BlockSource;)Lnet/minecraft/core/Position;"),
+                "execute: DispenserBlock.getDispensePosition static — the 1.20.1 m_52720_ call, still real on 21.1");
+        check(fields.contains("net/minecraft/world/level/block/DispenserBlock.FACING:Lnet/minecraft/world/level/block/state/properties/DirectionProperty;"),
+                "execute: DispenserBlock.FACING (1.20.1 f_52659_)");
+        check(calls.contains("net/minecraft/world/entity/projectile/Projectile.shoot(DDDFF)V"),
+                "execute: Projectile.shoot(DDDFF)V (1.20.1 m_6686_)");
+        check(consts.contains(0.1F), "execute: the 1.20.1 +0.1F Y-bias constant");
+        check(calls.stream().anyMatch(c -> c.endsWith(".addFreshEntity(Lnet/minecraft/world/entity/Entity;)Z")),
+                "execute: addFreshEntity (1.20.1 m_7967_)");
+        check(calls.contains("net/minecraft/world/item/ItemStack.shrink(I)V"),
+                "execute: shrink(1) (1.20.1 m_41774_)");
+        check(calls.contains("net/minecraft/world/entity/projectile/Projectile.shoot(DDDFF)V")
+                        && execNode.instructions.getLast().getOpcode() == org.objectweb.asm.Opcodes.ARETURN,
+                "execute: returns the (shrunk) stack — 1.20.1 tail");
+        MethodNode psNode = scn.methods.stream()
+                .filter(m -> m.name.equals("playSound")).findFirst().orElseThrow();
+        java.util.List<String> psCalls = new java.util.ArrayList<>();
+        for (org.objectweb.asm.tree.AbstractInsnNode n : psNode.instructions) {
+            if (n instanceof org.objectweb.asm.tree.MethodInsnNode mi) psCalls.add(mi.name + mi.desc);
+            if (n instanceof org.objectweb.asm.tree.LdcInsnNode l) check(Integer.valueOf(1002).equals(l.cst),
+                    "playSound: levelEvent 1002 (the dispenser-shoot event id)");
+        }
+        check(psCalls.contains("levelEvent(ILnet/minecraft/core/BlockPos;I)V"),
+                "playSound: levelEvent(1002, pos, 0) — inherited default on 21.1, same shape as 1.20.1's ServerLevel.m_46796_");
     }
 
     /** minimal CriterionTrigger stand-in (the interface has 4 members; anonymous

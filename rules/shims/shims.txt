@@ -44,6 +44,7 @@ com/modbridge/shim/SimpleChannelCompat
 com/modbridge/shim/TrapDoorBlockCompat
 com/modbridge/shim/Vanishable
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance
+net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs
 net/minecraft/world/level/storage/loot/InertLootSerializerCodecs$InertCodec
 net/minecraft/world/level/storage/loot/LootSerializer

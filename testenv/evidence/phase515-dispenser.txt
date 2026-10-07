@@ -1,0 +1,190 @@
+# phase 5.15 — the dispenser template wall falls; the reload event crosses the
+# bombs-behavior lane (2026-10-07) — HONEST PARTIAL, 5.16 head named
+
+Gates at close (all green):
+- unit ctor-retarget ("test-rewrite"): 3/3 script, 373 checks (baseline 357 + 16 new)
+- shims: 5/5 script, 307 + 22 checks (baseline 277 + 22; +30 dispenser checks);
+  72 shim classes + 3 shared (the dispenser carrier added — per-mod, not shared)
+- refmap 3/3 (32 checks), srg-resolver 4/4 (20 checks), matrix 16/16 (final agent)
+
+## THE RECON (javap, server-1.20.1 srg vs server-1.21.1 srg jars)
+
+1.20.1 net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior
+  (extends DefaultDispenseItemBehavior; NOT present on 21.1 — the 5.11 "gone
+  classes" census had explicitly deferred it as a known future wall):
+  m_7498_(BlockSource,ItemStack)Stack   execute — the TEMPLATE, public
+  m_6895_(Level,Position,ItemStack)Proj getProjectile — ABSTRACT hook
+  m_7104_()F                            getPower — default 1.1F
+  m_7101_()F                            getUncertainty — default 6.0F
+  m_6823_(BlockSource)V                 playSound — levelEvent(1002, pos, 0)
+  Template body (bytecode): ServerLevel = source.level();
+  Position = DispenserBlock.m_52720_(source)  [the STATIC getDispensePosition,
+  NOT source.center()]; Direction = source.state().getValue(FACING);
+  projectile.shoot(stepX, stepY + 0.1F, stepZ, getPower(), getUncertainty())
+  [the 1.20.1 +0.1F Y-bias, i2f/fadd/f2d]; addFreshEntity (pop); shrink(1);
+  areturn the (shrunk) stack.
+
+21.1 replacement: net/minecraft/core/dispenser/ProjectileDispenseBehavior
+  (SAME package in 1.21.1 — the world/level/dispenser move is later; per 5.14's
+  note it was misnamed):
+  ctor (Item) — requires the ITEM to implement ProjectileItem, builds
+  ProjectileItem.DispenseConfig (positionFunction/uncertainty/power/
+  overrideDispenseEvent); execute = positionFunction.getDispensePosition ->
+  item.asProjectile(...) -> item.shoot(...) -> addFreshEntity -> shrink.
+  DATA-DRIVEN: no abstract hooks, no custom-entity escape hatch — a behavior
+  that overrides getProjectile to build a mod-owned projectile (BombsBehavior's
+  BombEntity(Level,DDD,BombType)) has no mechanical successor.
+
+Mod census (constant-pool, both raw jars): exactly three supplementaries
+classes, moonlight ZERO:
+  common/block/dispenser/BombsBehavior        extends; overrides m_6895_,
+                                              m_7101_, m_7104_ (returns
+                                              ProjectileStats BOMB_DISPENSER_*)
+  common/block/dispenser/DispenserBehaviorsManager$2 extends; overrides m_6895_
+                                              (RopeArrowEntity, pickup=ALLOWED)
+  mixins/AbstractProjectileBehaviorAccessor   @Mixin class literal + 4
+                                              EXPLICIT-value @Invoker proxies
+                                              (getUncertainty/getPower/
+                                              getProjectile/playSound); sole
+                                              consumer: DispenserMinecartEntity
+                                              (the 5.11 minecart path, boot-
+                                              relief, runtime not claimed)
+
+## WHAT FELL
+
+THE SEMANTIC BASE-CLASS SHIM (the 5.14-banked design; shims/src/net/minecraft/
+core/dispenser/AbstractProjectileDispenseBehavior.java, the AbstractCriterion-
+TriggerInstance vanilla-package-carrier pattern):
+  - extends the REAL 21.1 DefaultDispenseItemBehavior (translated instances
+    stay true DispenseItemBehaviors for vanilla's DISPENSER_REGISTRY dispatch);
+  - reimplements the 1.20.1 template BYTECODE-EXACT over the 21.1 surface:
+    execute (public, widening the 21.1 protected hook), DispenserBlock.
+    getDispensePosition(source) (still a 21.1 public static — used, exactly as
+    1.20.1 did), state().getValue(DispenserBlock.FACING), Projectile.shoot
+    (DDDFF) with the +0.1F Y-bias, addFreshEntity, shrink(1); playSound ->
+    levelEvent(1002, pos, 0) (inherited default on 21.1, same ServerLevel
+    invokevirtual shape as 1.20.1's m_46796_);
+  - carries the 1.20.1 hook surface with 21.1 mojmap member names — the names
+    the global srg table already renames the subclass overrides TO (m_6895_ ->
+    getProjectile, m_7101_ -> getUncertainty, m_7104_ -> getPower): the
+    descriptors do NOT drift (identical internal types both sides), so the
+    translated subclasses remain true overriders with zero member rules;
+  - deliberate non-bridge (documented in the javadoc): the 21.1 data-driven
+    positionFunction/DispenseConfig per-item semantics — the shim reproduces
+    the 1.20.1 SHARED template, which is what the translated behaviors
+    compiled against.
+  Wiring: ONE typerenames entry
+    net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior
+        @SHIM@/AbstractProjectileDispenseBehavior
+  which retargets, in one pass: superclass refs + super ctor invokespecials
+  (BombsBehavior, $2), the @Mixin annotation's class literal (the accessor),
+  and every frame/local desc. The rewriter relocates the carrier per-mod to
+  com/modbridge/shim/supplementaries/ (JPMS no-platform-parking rule).
+
+OFFLINE PROOFS (gates):
+  - ShimFacadeTest.dispenserShimExactness (+30 checks): structural exactness
+    (abstract; extends the real DefaultDispenseItemBehavior; IS-A
+    DispenseItemBehavior; ctor; execute PUBLIC/DECLARED with the 1.20.1 desc;
+    getProjectile protected-abstract 3-arg, desc exact; hook + playSound
+    descs); LIVE verifier pass — translated-shaped subclasses (the $2 shape:
+    getProjectile only; the BombsBehavior shape: all three hooks) DEFINE,
+    LINK and dispatch, inherited defaults 6.0F/1.1F, overridden hooks dispatch
+    virtually; the accessor's 4 EXPLICIT @Invoker values resolve by name
+    against the shim; and a bytecode walk of the compiled carrier: every
+    execute/playSound call target is the exact 21.1 member (level accessor,
+    getDispensePosition static, FACING field, shoot(DDDFF)V, the 0.1F
+    constant, addFreshEntity, shrink(I)V, levelEvent(I;BlockPos;I)V, areturn
+    tail).
+  - CtorRetargetTest.dispenserShimRewrite (+16 checks): the REAL shipped rules
+    drive a BombsBehavior-shaped srg-space class and an accessor-shaped mixin
+    through the full transform(): superclass ref + super ctor onto the per-mod
+    shim; m_6895_/m_7101_/m_7104_ -> the shim's mojmap hook names (desc
+    unchanged); no srg ids left; the SUBCLASS itself never renamed; the @Mixin
+    class literal -> the shim; the explicit @Invoker value untouched; the
+    accessor METHOD not renamed (5.14 scoping fix holds); mixinDriftReasons
+    EMPTY (the mixin survives the phase-4 drift gate un-neutralized — shim
+    targets are non-platform); refmap strings follow (m_7101_()F ->
+    getUncertainty()F, L-refs and dotted targets -> the per-mod shim path).
+
+## LADDER RESULT (boot 1, 17:45 ET, agent 3B329FF0)
+
+The AbstractProjectileDispenseBehavior CNFE is GONE (0 mentions in the whole
+log). The reload event now runs supp's DispenserBehaviorsManager.registerBehaviors
+past the bombs lane: both translated subclasses construct through the shim
+(verified in the translated jar: BombsBehavior/$2 superName = com/modbridge/
+shim/supplementaries/AbstractProjectileDispenseBehavior, hook overrides
+renamed, the shim carrier riding in the jar with the REAL 21.1 superclass),
+and execution reaches BucketHelper.isFishBucket (registerBehaviors:162) —
+two frames deeper than the 5.14 stop, still inside the same event.
+
+Counters (this boot): supp = 1090 classes, member renames=352 (as 5.14), ctor
+retargets=2, method drops=1, interface repairs=22, holder unwraps=22, bare
+wraps=6, super swaps=10, override returns=1, field unwraps=14, 69 shims
+injected; ml = 489 classes, member renames=82, 72 shims injected (69 + the 3
+shared it owns).
+
+THE STOP (5.16 head, precisely scoped):
+  org.spongepowered.asm.mixin.transformer.throwables.IllegalClassLoadError:
+  net.mehvahdjukaar.supplementaries.mixins.forge.MobBucketItemAccessor is in a
+  defined mixin package net.mehvahdjukaar.supplementaries.mixins.forge.* owned
+  by supplementaries.mixins.json and cannot be referenced directly
+    at supp forge/SuppPlatformStuffImpl.getFishType(SuppPlatformStuffImpl:51)
+    via common/misc/mob_container/BucketHelper.isFishBucket(:134)
+    via DispenserBehaviorsManager.registerBehaviors(:162)
+  The site is THREE instructions (checkcast the accessor + invokeinterface
+  invokeGetFishType + areturn). The accessor's @Invoker("getFishType") targets
+  1.20.1 MobBucketItem.getFishType(), which 21.1 REMOVED (javap: no such
+  method; the entity type now lives in the private final field `type`).
+  THE FAMILY (direct references to mixin-package classes from mod code, both
+  raw jars): 9 sites —
+    supp: mixins.LivingEntityAccessor      <- CannonBallEntity, LunchBoxItem
+          mixins.AgeableListAccessor       <- SlimedLayer (client)
+          mixins.AbstractProjectileBehaviorAccessor <- DispenserMinecartEntity
+          mixins.forge.FireBlockAccessor   <- SuppPlatformStuffImpl
+          mixins.forge.MobBucketItemAccessor <- SuppPlatformStuffImpl (THIS wall)
+    ml:   core/mixins/accessor.DispenserBlockEntityAccessor <- DispenserHelper$AdditionalDispenserBehavior
+          core/mixins/accessor.DispenserBlockAccessor     <- DispenserHelper$AdditionalDispenserBehavior
+          core/mixins/accessor.BrainAccessor              <- VillagerBrainEventInternal
+          core/mixins/forge.ButtonAccessor                <- CustomConfigScreen (client)
+  EMPIRICAL MIXIN-GUARD ASYMMETRY (5.16's first question): ml's
+  DispenserBlockAccessor direct reference loaded FINE in the 5.14 boots
+  (NoSuchMethodError — a member resolution failure, not a classload guard) and
+  ml's DispenserHelper$AdditionalDispenserBehavior (which carries two direct
+  accessor references) was ON this boot's executed path ABOVE the stop with no
+  IllegalClassLoadError — while supp's MobBucketItemAccessor direct load is
+  GUARD-FATAL. Working hypothesis to verify first: a mixin whose APPLY
+  succeeded releases its class for direct loads; a mixin whose target member
+  is GONE on 21.1 (getFishType) stays pending/errored and its classload is
+  fatal. If that holds, the systematic fix family is "bridge the accessor's
+  target member so every accessor applies" (field reads need an AT line or a
+  member-level bridge) rather than per-site body rewrites; fallback is the
+  established pinned-single-site pattern (the mob-bucket site itself: 21.1
+  semantics = read MobBucketItem.type — an accesstransformer.cfg line
+  `public net.minecraft.world.item.MobBucketItem type` + a 3-instruction body
+  rewrite: checkcast+invokeinterface -> getfield+areturn).
+
+Non-fatal, unchanged from 5.14: moonlight's dynamic-asset recipe generation
+NCDFE (FinishedRecipe) — caught, pack still builds.
+
+Done was NOT reached (rcon not reached — honest partial); the ladder stops
+one wall past the 5.14 close.
+
+## FINAL CAPTURE BOOT (post-matrix, the committed agent jar)
+
+[ModBridge] translating 2 jar(s) ... (NeoForge 1.21.1 target)
+[ModBridge] moonlight translated in 1119 ms / supplementaries in 3348 ms
+mixin config neutralizations: ml ItemMixin/MapItemDataPacketMixin/
+SelfEntitySpawnDataMixin (phase-4 drift gate, as before)
+AbstractProjectileDispenseBehavior mentions in the whole log: 0 (the 5.14 wall)
+THE STOP:
+  [main/ERROR] [net.neoforged.bus.EventBus/EVENTBUS]: Exception caught during
+  firing event: IllegalClassLoadError: MobBucketItemAccessor ... cannot be
+  referenced directly
+    (SuppPlatformStuffImpl.getFishType:51 <- BucketHelper.isFishBucket:134 <-
+     DispenserBehaviorsManager.registerBehaviors:162; reload event =>
+     "Failed to load datapacks, can't proceed")
+rcon: NOT reached (honest partial).
+Boot log: testenv/server-121/logs/latest.log + console-server-121.log
+(capture boot 17:45 ET; the matrix run that preceded it resets mods/source-1201
+to the fixture — the trial jars were restored from sha256-verified copies
+(supp 522b9faa..., ml e960cd6e...), then modbridge-cache wiped).

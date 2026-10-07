@@ -1320,3 +1320,115 @@ resolve by value; renaming their method orphans consumer call sites); (4) when
 reproducing 1.20.1 leniency that 21.1 made strict, prefer reproducing the
 1.20.1 SEMANTIC (skip absent-mod content) at translation time over patching the
 21.1 loader.
+
+## Phase 5.15 — the dispenser template wall falls; the reload event crosses the
+## bombs-behavior lane (2026-10-07, FINAL campaign day, honest partial)
+
+The 5.14 head-of-list wall is GONE. javap over the two vanilla jars:
+
+  1.20.1 net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior
+    (the abstract extend-and-override template; ABSENT on 21.1):
+    m_7498_ execute (public template), m_6895_ getProjectile (abstract hook),
+    m_7104_ getPower (1.1F), m_7101_ getUncertainty (6.0F), m_6823_ playSound
+    (levelEvent 1002); the body uses the STATIC DispenserBlock.getDispensePosition
+    (NOT source.center()) and shoots with the 1.20.1 +0.1F Y-bias.
+  21.1 net/minecraft/core/dispenser/ProjectileDispenseBehavior (SAME package in
+    1.21.1 — the world/level/dispenser move is later; 5.14's census misnamed it):
+    DATA-DRIVEN — ctor(Item) demands the ITEM implement ProjectileItem and
+    carries a DispenseConfig record; no hooks, no custom-entity escape hatch.
+    A behavior overriding getProjectile to build a mod-owned projectile has no
+    mechanical successor.
+
+Census (constant-pool, both raw jars): exactly three supplementaries classes,
+moonlight ZERO — BombsBehavior (overrides getProjectile/getUncertainty/
+getPower), DispenserBehaviorsManager$2 (getProjectile only: RopeArrowEntity),
+mixins/AbstractProjectileBehaviorAccessor (@Mixin class literal + 4
+EXPLICIT-value @Invoker proxies; sole consumer the 5.11 minecart path).
+
+What fell (each measured-then-fixed; full ladder + runbook:
+testenv/evidence/phase515-dispenser.txt):
+
+1. THE SEMANTIC BASE-CLASS SHIM (the 5.14-banked design;
+   shims/src/net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior,
+   the AbstractCriterionTriggerInstance vanilla-package-carrier pattern): it
+   extends the REAL 21.1 DefaultDispenseItemBehavior (translated instances stay
+   true DispenseItemBehaviors for vanilla's registry dispatch) and reimplements
+   the 1.20.1 template BYTECODE-EXACT over the 21.1 surface — execute (public,
+   widening the 21.1 protected hook), DispenserBlock.getDispensePosition static
+   (still present — used, exactly as 1.20.1 did), FACING getValue,
+   Projectile.shoot(DDDFF) with the +0.1F Y-bias, addFreshEntity, shrink(1),
+   playSound levelEvent-1002 — carrying the 1.20.1 hook surface under the
+   21.1 mojmap member names, which are EXACTLY the names the global srg table
+   already renames the subclass overrides to: the descs do not drift
+   (identical internal types both sides), so the subclasses remain true
+   overriders with ZERO member rules. Documented non-bridge: the 21.1
+   data-driven positionFunction/DispenseConfig per-item semantics — the shim
+   reproduces the 1.20.1 SHARED template the behaviors compiled against.
+2. THE WIRING is one typerenames entry (AbstractProjectileDispenseBehavior ->
+   @SHIM@/AbstractProjectileDispenseBehavior), which retargets in one pass the
+   superclass refs + super ctor invokespecials, the @Mixin annotation's class
+   literal, and every frame/local desc; the rewriter relocates the carrier
+   per-mod to com/modbridge/shim/supplementaries/. The mixin accessor's 4
+   explicit @Invoker values resolve against the shim's members BY VALUE at
+   apply (5.14's explicit-value lesson holds); its refmap entries rewrite
+   (srg value -> mojmap name, dotted target -> the shim path); mixinDriftReasons
+   stays EMPTY (shim targets are non-platform, the member inventory is not
+   consulted).
+
+Offline proofs (gates): ShimFacadeTest.dispenserShimExactness (+30 checks) —
+structural exactness, a LIVE verifier pass of both translated subclass shapes
+(define/link/dispatch; inherited defaults 6.0F/1.1F; overridden hooks dispatch
+virtually), the 4 @Invoker values resolving by name, and a bytecode walk of
+the compiled carrier proving every execute/playSound call target is the exact
+21.1 member; CtorRetargetTest.dispenserShimRewrite (+16 checks) — the REAL
+shipped rules driving a BombsBehavior-shaped srg-space class and an
+accessor-shaped mixin through the full transform(), with the subclass itself
+never renamed and no srg ids left.
+
+LADDER RESULT: the reload-event CNFE is gone (0 mentions in the whole log).
+registerBehaviors constructs BOTH translated subclasses through the shim
+(verified in the translated jar: superName = com/modbridge/shim/
+supplementaries/AbstractProjectileDispenseBehavior) and execution reaches
+BucketHelper.isFishBucket — two frames deeper than the 5.14 stop, same event.
+The stop is precisely scoped (5.16 head):
+
+  IllegalClassLoadError: net.mehvahdjukaar.supplementaries.mixins.forge.
+  MobBucketItemAccessor is in a defined mixin package ... and cannot be
+  referenced directly
+    (supp SuppPlatformStuffImpl.getFishType:51 — a THREE-instruction site,
+    checkcast + invokeinterface against the accessor — via BucketHelper.
+    isFishBucket:134 <- DispenserBehaviorsManager.registerBehaviors:162)
+
+The accessor's @Invoker("getFishType") targets 1.20.1 MobBucketItem.getFishType,
+REMOVED on 21.1 (the entity type lives in the private final field `type`).
+This is the head of a FAMILY: 9 direct mod-code references to mixin-package
+classes across the two jars (supp: LivingEntityAccessor, AgeableListAccessor,
+AbstractProjectileBehaviorAccessor, FireBlockAccessor, MobBucketItemAccessor;
+ml: DispenserBlockEntityAccessor, DispenserBlockAccessor, BrainAccessor,
+ButtonAccessor). EMPIRICAL ASYMMETRY to resolve first: ml's DispenserBlock-
+Accessor direct reference loaded FINE in the 5.14 boots (NSME — member
+resolution, not the classload guard) and ml's DispenserHelper$
+AdditionalDispenserBehavior (two direct accessor refs) sat on this boot's
+executed path ABOVE the stop with no IllegalClassLoadError — while supp's
+MobBucketItemAccessor direct load is guard-fatal; working hypothesis: an
+accessor whose APPLY succeeded releases its class for direct loads, one whose
+target member is gone stays pending/errored and loads fatal — which would make
+"bridge every accessor's target member so every accessor applies" (field reads
+via an accesstransformer.cfg line or a member-level bridge) the systematic fix,
+with the pinned-single-site pattern (AT line `public net.minecraft.world.item.
+MobBucketItem type` + getfield rewrite) as the fallback.
+
+Non-fatal, unchanged from 5.14: moonlight's dynamic-asset FinishedRecipe NCDFE
+(caught; pack still builds) — documented, not fixed (not cheap; the pack lane
+works).
+
+Done was NOT reached (rcon not reached — honest partial); the ladder stops
+one wall past the 5.14 close.
+
+Gates: ctor-retarget 3/3 (373 checks: +16 dispenser shim rewrite), shims 5/5
+(307 + 22; 72 classes + 3 shared: the dispenser carrier added), refmap 3/3,
+srg-resolver 4/4, matrix 16/16 with the final agent. Counters (final rules):
+supp = 1090 classes, ctor retargets=2, method drops=1, interface repairs=22,
+holder unwraps=22, bare wraps=6, member renames=352, super swaps=10; ml = 489
+classes, ctor retargets=4, method drops=8, interface repairs=40, holder
+unwraps=5, member renames=82.

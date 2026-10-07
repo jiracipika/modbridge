@@ -128,6 +128,28 @@ net/minecraftforge/common/crafting/CraftingHelper	@SHIM@/CraftingHelper
 # RUNTIME is not claimed (same acceptance as the loot/condition-lane shims).
 net/minecraft/advancements/critereon/AbstractCriterionTriggerInstance	@SHIM@/AbstractCriterionTriggerInstance
 
+# --- dispenser lane (phase 5.15): 1.20.1's abstract extend-and-override dispenser
+# projectile template has NO counterpart on 21.1 (removed class; the live-boot
+# 5.14 stop: ClassNotFoundException inside supp's reload event). 21.1 replaced
+# the template-method pattern with the data-driven ProjectileDispenseBehavior(Item)
+# (item implements ProjectileItem + a DispenseConfig record) — no mechanical
+# successor for behaviors that override getProjectile to build CUSTOM entities.
+# The shim (shims/src/net/minecraft/core/dispenser/) extends the REAL 21.1
+# DefaultDispenseItemBehavior and reimplements the 1.20.1 template (m_7498_
+# execute / m_6895_ getProjectile abstract / m_7104_ getPower 1.1F / m_7101_
+# getUncertainty 6.0F / m_6823_ playSound levelEvent-1002) over the 21.1
+# surface (DispenserBlock.getDispensePosition static — still present — FACING
+# getValue, Projectile.shoot with the 1.20.1 +0.1F Y-bias, addFreshEntity,
+# shrink). The hook descs do NOT drift (identical internal types both sides;
+# the srg ids rename to exactly the mojmap names the shim declares), so the
+# translated subclasses stay true overriders and the accessor mixin's
+# EXPLICIT-value @Invoker proxies resolve against the shim's members by value.
+# Census (both raw jars): supp BombsBehavior + DispenserBehaviorsManager$2
+# (superclass refs + no-arg ctor calls) + mixins/AbstractProjectileBehaviorAccessor
+# (@Mixin class literal — the typerename also retargets the annotation's Type
+# value and the refmap's member entries); moonlight 0.
+net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior	@SHIM@/AbstractProjectileDispenseBehavior
+
 # --- DFU 6 -> 8, config lane round-3 follow-up (phase 5.9): DataResult$PartialResult
 # is GONE on datafixerupper 8 - the record DataResult$Error replaced it. For the
 # measured member surface it is a drop-in: message(), map(Function),
@@ -151,10 +173,12 @@ com/mojang/serialization/DataResult$PartialResult	com/mojang/serialization/DataR
 # target verified present in classlist-1211. Blocks the live-boot wall
 # (EnchantmentTableBlock CNFE from supp CommonConfigs, a frame/local-resolved ref).
 # REMOVED-with-no-counterpart and NOT ruled (their referrers are known future
-# walls, mixin targets auto-neutralize): BlockSourceImpl, AbstractProjectileDispense
-# Behavior (mixin), DyeableLeatherItem, Vanishable, GravelBlock, EnchantmentCategory,
+# walls, mixin targets auto-neutralize): BlockSourceImpl, DyeableLeatherItem,
+# Vanishable, GravelBlock, EnchantmentCategory,
 # ProtectionEnchantment, LootDataManager, RecordItem, AdvancementList,
 # SerializationContext/DeserializationContext, FinishedRecipe/CraftingRecipeBuilder.
+# (AbstractProjectileDispenseBehavior was on this list with "mixin" as its
+# known referrer — RULED in phase 5.15, the dispenser-lane shim above.)
 # NOTE on PotionContents: the TYPE rename is 1:1 but its STATIC surface drifted
 # (PotionUtils statics are gone - effects became data components); referrer classes
 # become loadable, residual member refs fail NSME only on non-boot runtime paths.

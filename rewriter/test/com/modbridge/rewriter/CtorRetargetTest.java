@@ -111,6 +111,129 @@ public final class CtorRetargetTest {
         fromModDataStrip();
         fieldUnwrapMechanism();
         mapRegistryDispatchFix();
+        dispenserShimRewrite();
+    }
+
+    // ------------------------------------- dispenser template shim rewrite (phase 5.15)
+
+    /**
+     * The 5.15 wall end-to-end through the REAL shipped rules: a BombsBehavior-shaped
+     * srg-space class (superclass ref, no-arg super ctor call, m_6895_/m_7101_/m_7104_
+     * hook overrides) and the AbstractProjectileBehaviorAccessor-shaped @Mixin
+     * (4 explicit-value @Invoker proxies) go through the full transform().
+     * The typerename to @SHIM@ must retarget the superclass ref, the ctor call, the
+     * @Mixin annotation's class literal AND survive the phase-4 drift gate; the
+     * global srg table must rename the hook overrides to exactly the shim's mojmap
+     * member names (desc-identical both sides), and the mixin refmap strings must
+     * follow (srg value -> mojmap, dotted target -> the per-mod shim package).
+     */
+    void dispenserShimRewrite() throws IOException {
+        Rewriter r = new Rewriter();
+        r.loadRules(Path.of("rules"));
+        r.initShimRoot("supplementaries");
+        String shimPath = "com/modbridge/shim/supplementaries/AbstractProjectileDispenseBehavior";
+
+        // BombsBehavior shape: srg-space overrides + super ctor
+        ClassNode bombs = new ClassNode();
+        bombs.name = "test/BombsShape";
+        bombs.version = Opcodes.V17;
+        bombs.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        bombs.superName = "net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior";
+        MethodNode init = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        init.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        init.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior", "<init>", "()V", false));
+        init.instructions.add(new InsnNode(Opcodes.RETURN));
+        init.maxStack = 1;
+        init.maxLocals = 1;
+        bombs.methods.add(init);
+        String PROJECTILE_DESC =
+                "(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/Position;Lnet/minecraft/world/item/ItemStack;)"
+                        + "Lnet/minecraft/world/entity/projectile/Projectile;";
+        MethodNode getProj = new MethodNode(Opcodes.ACC_PROTECTED, "m_6895_", PROJECTILE_DESC, null, null);
+        getProj.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
+        getProj.instructions.add(new InsnNode(Opcodes.ARETURN));
+        getProj.maxStack = 1;
+        getProj.maxLocals = 4;
+        bombs.methods.add(getProj);
+        MethodNode getUnc = new MethodNode(Opcodes.ACC_PROTECTED, "m_7101_", "()F", null, null);
+        getUnc.instructions.add(new LdcInsnNode(2.5F));
+        getUnc.instructions.add(new InsnNode(Opcodes.FRETURN));
+        getUnc.maxStack = 1;
+        getUnc.maxLocals = 1;
+        bombs.methods.add(getUnc);
+        MethodNode getPow = new MethodNode(Opcodes.ACC_PROTECTED, "m_7104_", "()F", null, null);
+        getPow.instructions.add(new LdcInsnNode(1.9F));
+        getPow.instructions.add(new InsnNode(Opcodes.FRETURN));
+        getPow.maxStack = 1;
+        getPow.maxLocals = 1;
+        bombs.methods.add(getPow);
+        r.transform(bombs);
+
+        check(bombs.superName.equals(shimPath),
+                "dispenser: superclass ref typerenamed onto the per-mod shim");
+        MethodInsnNode superCtor = first(bombs.methods.get(0), MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKESPECIAL);
+        check(superCtor != null && superCtor.owner.equals(shimPath),
+                "dispenser: the super ctor invokespecial follows the shim (separate constant from superName)");
+        check(bombs.methods.stream().anyMatch(m -> m.name.equals("getProjectile") && m.desc.equals(PROJECTILE_DESC)),
+                "dispenser: m_6895_ -> getProjectile, desc unchanged (internal types identical both sides)");
+        check(bombs.methods.stream().anyMatch(m -> m.name.equals("getUncertainty") && m.desc.equals("()F")),
+                "dispenser: m_7101_ -> getUncertainty");
+        check(bombs.methods.stream().anyMatch(m -> m.name.equals("getPower") && m.desc.equals("()F")),
+                "dispenser: m_7104_ -> getPower");
+        check(bombs.methods.stream().noneMatch(m -> m.name.startsWith("m_6") || m.name.startsWith("m_7")),
+                "dispenser: no srg ids left on the translated subclass");
+        check(!bombs.name.startsWith("net/minecraft"),
+                "dispenser: the shim rule never renames the SUBCLASS itself (owner-scoped reference rewrite)");
+
+        // AbstractProjectileBehaviorAccessor shape: @Mixin class literal + explicit @Invoker
+        ClassNode acc = new ClassNode();
+        acc.name = "test/AbstractProjectileBehaviorAccessor";
+        acc.version = Opcodes.V17;
+        acc.access = Opcodes.ACC_INTERFACE | Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT;
+        acc.superName = "java/lang/Object";
+        org.objectweb.asm.tree.AnnotationNode mixinAnnNode = new org.objectweb.asm.tree.AnnotationNode(
+                Opcodes.ASM9, "Lorg/spongepowered/asm/mixin/Mixin;");
+        mixinAnnNode.values = new java.util.ArrayList<>(List.of("value", org.objectweb.asm.Type.getType(
+                "Lnet/minecraft/core/dispenser/AbstractProjectileDispenseBehavior;")));
+        acc.invisibleAnnotations = new java.util.ArrayList<>(List.of(mixinAnnNode));
+        String invokerDesc = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+        MethodNode inv = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                "invokeGetUncertainty", "()F", null, null);
+        org.objectweb.asm.tree.AnnotationNode invAnnNode = new org.objectweb.asm.tree.AnnotationNode(
+                Opcodes.ASM9, invokerDesc);
+        invAnnNode.values = new java.util.ArrayList<>(List.of("value", "getUncertainty"));
+        inv.invisibleAnnotations = new java.util.ArrayList<>(List.of(invAnnNode));
+        acc.methods.add(inv);
+        r.transform(acc);
+        r.mixinDriftReasons(acc); // must not throw; drift result checked below
+
+        org.objectweb.asm.tree.AnnotationNode mixinAnn = acc.invisibleAnnotations.get(0);
+        Object mixinTarget = mixinAnn.values.get(1);
+        check(mixinTarget instanceof org.objectweb.asm.Type
+                        && ((org.objectweb.asm.Type) mixinTarget).getDescriptor().equals("L" + shimPath + ";"),
+                "dispenser: the @Mixin class literal retargets to the per-mod shim (annotation Type value)");
+        org.objectweb.asm.tree.AnnotationNode invAnn = acc.methods.get(0).invisibleAnnotations.get(0);
+        check("getUncertainty".equals(invAnn.values.get(1)),
+                "dispenser: the EXPLICIT @Invoker value survives untouched (resolves by value at apply)");
+        check(acc.methods.get(0).name.equals("invokeGetUncertainty"),
+                "dispenser: explicit-value accessor METHOD not renamed (5.14 scoping fix)");
+        java.util.List<String> drift = r.mixinDriftReasons(acc);
+        check(drift.isEmpty(),
+                "dispenser: the accessor mixin survives the phase-4 drift gate un-neutralized (shim target)");
+
+        // the mixin refmap strings through the same live tables
+        check(r.remapMemberRefString("m_7101_()F").equals("getUncertainty()F"),
+                "dispenser refmap: srg member value renames to the shim's mojmap hook name");
+        check(r.remapMemberRefString(
+                        "Lnet/minecraft/core/dispenser/AbstractProjectileDispenseBehavior;")
+                        .equals("L" + shimPath + ";"),
+                "dispenser refmap: L-reference target follows the shim");
+        check(r.remapMemberRefString(
+                        "net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior")
+                        .equals("com.modbridge.shim.supplementaries.AbstractProjectileDispenseBehavior"),
+                "dispenser refmap: dotted @Mixin(targets) string follows the per-mod shim");
     }
 
     Rewriter rewriterWithRule() throws IOException {
