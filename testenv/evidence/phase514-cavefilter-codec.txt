@@ -1,0 +1,190 @@
+# phase 5.14 — the CaveFilter codec wall falls; the ladder crosses worldgen parse,
+# loot, conditions and trades (2026-10-07) — HONEST PARTIAL, 5.15 head named
+
+Gates at close (all green):
+- unit ctor-retarget: 3/3 script, 357 checks (baseline 278 + 79 new)
+- shims: 3/3 script, 277 + 22 checks; 71 shim classes + 3 shared
+  (LootCompat added; CraftingHelper gained processConditions + the
+  registry-fallback getCondition path)
+- refmap 3/3 (32 checks), srg-resolver 4/4 (20 checks), matrix 16/16 (final agent)
+
+## THE CENSUS (javap diff, server-1.20.1 srg vs server-1.21.1 srg jars)
+
+The 5.13 head-of-list was the head of a family: exactly 16 vanilla worldgen "type"
+interfaces changed their abstract codec() return kind (Codec m_xxx_() ->
+MapCodec codec()):
+
+  net/minecraft/core/particles/ParticleType                     (m_7652_)
+  net/minecraft/util/valueproviders/FloatProviderType           (m_146529_)
+  net/minecraft/util/valueproviders/IntProviderType             (m_146560_)
+  net/minecraft/world/level/biome/BiomeSource                   (m_5820_)
+  net/minecraft/world/level/chunk/ChunkGenerator                (m_6909_)
+  net/minecraft/world/level/gameevent/PositionSourceType        (m_142341_)
+  net/minecraft/world/level/levelgen/blockpredicates/BlockPredicateType (m_190452_)
+  net/minecraft/world/level/levelgen/heightproviders/HeightProviderType (m_161992_)
+  net/minecraft/world/level/levelgen/placement/PlacementModifierType    (m_191869_)
+  net/minecraft/world/level/levelgen/structure/StructureType            (m_226884_)
+  net/minecraft/world/level/levelgen/structure/placement/StructurePlacementType (m_205049_)
+  net/minecraft/world/level/levelgen/structure/pools/StructurePoolElementType   (m_210553_)
+  net/minecraft/world/level/levelgen/structure/templatesystem/PosRuleTestType   (m_74214_)
+  net/minecraft/world/level/levelgen/structure/templatesystem/RuleTestType      (m_74324_)
+  net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessorType (m_74481_)
+  net/minecraft/world/level/levelgen/structure/templatesystem/rule/blockentity/RuleBlockEntityModifierType (m_276894_)
+
+Mod impl sites (constant-pool census, both raw jars): 2 —
+  moonlight core/misc/CaveFilter$Type implements PlacementModifierType
+  supplementaries common/worldgen/WaySignStructure$Type implements StructureType
+both with the identical body "getstatic <Owner>.CODEC : Codec; areturn".
+Call sites of codec() inside either mod: 0.
+DFU ground truth: RecordCodecBuilder.create returns Codec on BOTH DFU 6 and 8 —
+the drift is only at the interface method; DFU 8 ships the bridge
+MapCodec.assumeMapUnsafe(Codec) -> MapCodec (MapCodec$1: decode rebuilds the WHOLE
+map via MapLike.entries() — same-level fields, exactly the 1.20.1 plain-Codec
+dispatch; encode merges same-level entries; MapCodecCodec inputs are unwrapped).
+
+## WHAT FELL (12 boots, each measured-then-fixed)
+
+1. THE OVERRIDE-RETURN REWRITE (rules/overridereturns.txt, 16 family entries; the
+   mechanism the slice was scoped for): the override's desc -> ()MapCodec, its
+   generic signature follows, and every ARETURN is fronted by
+   MapCodec.assumeMapUnsafe. Stack-neutral; fail-fast on branch frames/statics;
+   transitive implements via the jar-local hierarchy (platform supers never
+   walked). Offline proof on the real jars:
+     CaveFilter$Type.codec: descriptor ()Lcom/mojang/serialization/MapCodec;
+       0: getstatic CaveFilter.CODEC
+       3: invokestatic MapCodec.assumeMapUnsafe
+       6: areturn
+     (WaySignStructure$Type identical; counters: ml override returns=1,
+      supp override returns=1.)
+   SEMANTIC PROOF (gate, real DFU 8 + real PlacementModifierType interface):
+   the rewritten bytes, defined in the test JVM, return a MapCodec; decode of
+   {"type":"moonlight:cave_filter","n":42} (type key present, same-level
+   fields) yields the payload; encode emits same-level entries with no
+   "value" key. RESULT: the CaveFilter AbstractMethodError is GONE (0 hits in
+   every boot after the rules landed) and the worldgen parse proceeds.
+
+2. from_mod conditioned-data strip (agent wiring + Rewriter resource pass).
+   Boot 1 wall after (1): vanilla 21.1 loads moonlight's CUSTOM registries
+   (moonlight:soft_fluids, moonlight:map_markers) through the strict
+   RegistryDataLoader; 1.20.1 moonlight loaded them through its own from_mod-
+   aware lenient loader — supp ships 80 conditioned compat files naming ~30
+   mods absent from the testbed => "Registry loading errors" => "Failed to load
+   datapacks, can't proceed". Fix: the agent collects the instance's present
+   mod ids ("[ModBridge] present mod ids for from_mod data conditioning:
+   [minecraft, c, supplementaries, moonlight]"; FIRST modId per jar — the
+   [[dependencies]] modId lines poisoned the first attempt, boot 3), and the
+   rewriter drops data .json files with (1) top-level from_mod naming an absent
+   mod, (2) any absent-mod id reference inside data/<ns>/moonlight/** (supp's
+   own teas: black_tea/coffee/... carry NO from_mod but their "id" names
+   farmersrespite items; sap/builders_tea/sugar_water reference
+   thermal/autumnity/create/the_bumblezone). Drops measured: 12 (ml) + 105 (supp).
+
+3. BuiltInLootTables field drift (NEW PASS rules/fieldunwraps.txt): ALL 113
+   fields moved ResourceLocation -> ResourceKey<LootTable>, names survive; 12
+   measured sites (supp reg/LootTablesInjects x11 incl. SHIPWRECK_TREASURE —
+   the live wall "does not have member field 'ResourceLocation
+   SHIPWRECK_TREASURE'" NSFE, fatal through the loot-inject event — plus
+   MineshaftElevatorPiece, UrnBlock). THE TRANSFORM IS TWO-PART (boot 5 proved
+   the single-part version a VerifyError: the JVM verifier types the getstatic's
+   pushed value from the CONSTANT-POOL descriptor, not the resolved field): the
+   CP desc -> ResourceKey AND ResourceKey.location() inserted immediately after
+   (stack- and frame-neutral). Counters: supp field unwraps=14. LINK-TIME
+   PROOF: the gate defines the rewritten class in-JVM and runs it (the exact
+   VerifyError regression pinned).
+
+4. LootTableReference.lootTableReference(ResourceLocation) ->
+   NestedLootTable.lootTableReference(ResourceKey<LootTable>) (typerename +
+   shared shim LootCompat=moonlight; ResourceKey reconstructed over
+   Registries.LOOT_TABLE). 1 call site (ml RegHelperImpl$1.addTableReference,
+   fed by supp's loot injects). Offline proof: the translated site calls
+   com/modbridge/shim/shared/LootCompat.lootTableReference.
+
+5. CraftingHelper shim family completion (phase 5.7's shim was short):
+   processConditions(JsonObject,String,ICondition.IContext) — moonlight's
+   resource-conditions mixin (applyResourceConditions, injected into vanilla
+   SimplePreparableReloadListener) calls it at datapack reload (boot 7 NSME);
+   1.20.1 semantics (missing key = load; all conditions must test). PLUS the
+   getCondition fallback to the inert serializer registry (boot 8:
+   "cannot parse recipe condition of type 'supplementaries:flag'" was FATAL
+   through the same mixin): translated serializers registered via register()
+   read through read(json) return REAL 21.1 IConditions (the 1.20.1 forge
+   interface was typerenamed onto neoforge's, same test(IContext)), so flags
+   evaluate for real against the mod's translated config machinery.
+
+6. MapRegistry.dispatch CCE (NEW PASS fixMapRegistryDispatch, PINNED single
+   site): boot 9 wall "MapCodec$MapCodecCodec cannot be cast to MapCodec" at the
+   villager-trades reload — DFU 8 KEPT Codec.dispatch's erased descriptor (the
+   MapCodec bound is generic-only, javap'd) but KeyDispatchCodec.decode casts
+   the produced value codec to MapCodec, and the registered RecordCodecBuilder
+   products ARE MapCodecCodec wrappers on DFU 8. Fix (shape-neutral outward):
+   the value lambda (checkcast Codec; areturn) becomes
+   checkcast Codec; assumeMapUnsafe; areturn with the lambda desc + indy
+   instantiated type following to (Object)MapCodec (the raw samMethodType stays
+   Function.apply(Object)Object — javac emits the erasure there; boot 10 caught
+   the first draft matching the wrong arg); Codec.dispatch -> dispatchMap
+   keeping the INVOKESPECIAL(itf) same-class default super-call shape, and the
+   result wraps through MapCodec.codec() (INVOKEVIRTUAL — MapCodec is a class;
+   an INVOKEINTERFACE there is an IncompatibleClassChangeError, boot 10) so
+   dispatch's declared Codec return and ModItemListing.CODEC stay byte-identical
+   to 1.20.1.
+
+7. Accessor-rename scoping (phase-4 regression, second live hit; boots 11-12):
+   moonlight DispenserBlockAccessor.getDispenserRegistry (EXPLICIT
+   @Accessor("DISPENSER_REGISTRY")) was renamed getDISPENSER_REGISTRY by the
+   derived-name pass while its consumer call sites kept the source name =>
+   NSME at the dispenser lane. The rename now applies ONLY to accessors without
+   an explicit value (explicit-value accessors resolve by the annotation value
+   at runtime — the compiled method name is what consumers bind to).
+
+## LADDER RESULT (final capture boot)
+
+The worldgen datapack parse crosses: the placement-modifier dispatch (0
+AbstractMethodError anywhere — the 5.13 wall), structure types, the moonlight
+custom registries (soft_fluids + map_markers parse), loot injects, resource
+conditions, villager trades, and the dispenser lane up to supp's bombs behavior.
+
+THE STOP (5.15 head, precisely scoped):
+  ClassNotFoundException: net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior
+  (supp common/block/dispenser/BombsBehavior extends it, plus
+  DispenserBehaviorsManager$2 and mixins/AbstractProjectileBehaviorAccessor;
+  fired inside the reload event => "Failed to load datapacks, can't proceed")
+  21.1 replaced the abstract extend-and-override class with the data-driven
+  ProjectileDispenseBehavior(ProjectileItem, DispenseConfig) — the
+  template-method pattern (getProjectile/getPower/getUncertainty/playSound
+  hooks) has no mechanical successor. The bridge is a SEMANTIC shim: a
+  compatibility base class reimplementing the 1.20.1 template over the 21.1
+  surface + retargeting supp's accessor mixin, an argument-level migration.
+
+Non-fatal, documented: moonlight's dynamic-asset recipe generation hits the
+1.20.5 data-recipe API drift (NoClassDefFoundError net/minecraft/data/recipes/
+FinishedRecipe inside TemplateRecipeManager.<clinit> via supp
+addSignPostRecipes) — CAUGHT by moonlight; the pack still builds ("Finished
+runtime resources generation"); only the sign-post recipe templates degrade.
+
+Done was NOT reached (rcon not reached — honest partial); the ladder stops six
+walls past the 5.13 close.
+
+## FINAL CAPTURE BOOT (post-matrix, the committed agent jar)
+
+[ModBridge] present mod ids for from_mod data conditioning: [minecraft, c, supplementaries, moonlight]
+from_mod strip: dropped 12 conditioned data file(s) for absent mods        (moonlight)
+from_mod strip: dropped 105 conditioned data file(s) for absent mods       (supplementaries)
+[main/INFO] [Moonlight/]: Finished runtime resources generation for 1 packs in a total of 12 ms
+AbstractMethodError hits in the whole log: 0                                (the 5.13 wall)
+Loot NSFE / MapCodec CCE / processConditions NSME / supplementaries:flag
+fatal / villager-trades CCE / DispenserBlockAccessor NSME: all absent.
+THE STOP:
+  [main/ERROR] [net.neoforged.bus.EventBus/EVENTBUS]: Exception caught during firing event:
+    net/minecraft/core/dispenser/AbstractProjectileDispenseBehavior
+  Caused by: java.lang.ClassNotFoundException:
+    net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior
+    (supp BombsBehavior extend-lane; reload event => "Failed to load datapacks,
+    can't proceed with server load")
+Non-fatal (logged, pack still builds):
+  [Moonlight/]: An error occurred while trying to generate dynamic assets ...
+  Caused by: java.lang.NoClassDefFoundError: net/minecraft/data/recipes/FinishedRecipe
+
+rcon: NOT reached (the server does not reach Done — honest partial).
+Boot log: testenv/server-121/logs/latest.log + console-server-121.log
+(capture boot 17:07 ET; the matrix run that preceded it resets mods/source-1201
+to the fixture — re-copy the trial jars before any trial boot).

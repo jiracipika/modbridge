@@ -11,3 +11,8 @@ RecordItem=moonlight
 # moonlight's API); owner moonlight (the dependency; supp reads it cross-mod,
 # the proven RecordItem shape)
 ItemStackTagCompat=moonlight
+# (phase 5.14) the loot-inject bridge: LootTableReference.lootTableReference
+# (ResourceLocation) became NestedLootTable.lootTableReference(ResourceKey) on
+# 21.1; shared because the retargeted call shape lives in moonlight's RegHelper
+# lambdas that run supp's handlers (cross-mod, proven RecordItem shape)
+LootCompat=moonlight

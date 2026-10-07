@@ -1,5 +1,6 @@
 package net.neoforged.neoforge.common.crafting;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.serialization.JsonOps;
 
@@ -76,10 +77,57 @@ public final class CraftingHelper {
             if (parsed.isPresent()) {
                 return parsed.get();
             }
-        } catch (RuntimeException | LinkageError e) {
-            throw new IllegalStateException(message(id), e);
+        } catch (RuntimeException | LinkageError ignored) {
+            // fall through: known types parse above; everything else may still be a
+            // translated serializer registered through register() (phase 5.14)
+        }
+        // phase 5.14 (measured wall: supp's "supplementaries:flag" condition fatally
+        // aborting the resource-conditions mixin at datapack load): the translated
+        // serializers mods registered through {@link #register} ARE present in the
+        // inert registry — their {@code read(json)} returns a translated ICondition
+        // that implements the REAL 21.1 interface (the 1.20.1 forge ICondition was
+        // typerenamed onto it, same test(IContext) shape), so the condition evaluates
+        // for real (flag conditions read the mod's translated config machinery).
+        IConditionSerializer<?> serializer = CONDITION_SERIALIZERS.get(parseId(id));
+        if (serializer != null) {
+            return serializer.read(json);
         }
         throw new IllegalStateException(message(id));
+    }
+
+    private static ResourceLocation parseId(String id) {
+        int i = id.indexOf(':');
+        if (i <= 0 || i == id.length() - 1) {
+            throw new IllegalStateException(message(id));
+        }
+        return ResourceLocation.fromNamespaceAndPath(id.substring(0, i), id.substring(i + 1));
+    }
+
+    /**
+     * Phase 5.14 (measured wall): the third 1.20.1 member — moonlight's
+     * resource-conditions mixin (applyResourceConditions, injected into vanilla's
+     * SimplePreparableReloadListener) calls
+     * {@code processConditions(JsonObject, String, ICondition.Context)} during the
+     * datapack reload to filter conditioned resources. 1.20.1 semantics: a missing
+     * (or null) key means "load"; otherwise every condition under the key must test
+     * true. Conditions parse through the same codec path as {@link #getCondition}
+     * (faithful for known vanilla/NeoForge types, loud for translated ones). A
+     * singleton object in place of an array is accepted (1.20.1 Forge allowed it).
+     */
+    public static boolean processConditions(JsonObject json, String key, ICondition.IContext context) {
+        if (json == null || !json.has(key) || json.get(key).isJsonNull()) {
+            return true;
+        }
+        JsonElement cond = json.get(key);
+        if (cond.isJsonArray()) {
+            for (JsonElement e : cond.getAsJsonArray()) {
+                if (!getCondition(e.getAsJsonObject()).test(context)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return getCondition(cond.getAsJsonObject()).test(context);
     }
 
     private static String message(String id) {

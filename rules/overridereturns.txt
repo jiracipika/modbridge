@@ -1,0 +1,46 @@
+# Override-return rewrites (phase 5.14): vanilla worldgen "type" interfaces whose
+# abstract codec() changed RETURN TYPE between 1.20.1 and 21.1 — Codec m_xxx_() ->
+# MapCodec codec() (the 21.1 dispatch lane, vanilla KeyDispatchCodec, consumes
+# MapCodecs). Measured by javap diff over server-1.20.1 srg vs server-1.21.1 jars:
+# exactly these 16 interfaces drift; every 1.20.1 mod override with the old shape
+# stops overriding after the SRG->mojmap rename and dies with AbstractMethodError
+# when the dispatch calls codec() during worldgen JSON parse (live wall: moonlight
+# CaveFilter$Type, 5.13 boot).
+#
+# Format: interfaceOwner|oldDesc -> newName|newDesc|wrapOwner|wrapName|wrapDesc
+# (interface owner spelling is identical raw and final space — vanilla worldgen
+# class names do not drift; the method name is matched POST-remapClass, i.e. the
+# 21.1 mojmap name after the SRG id mapped to "codec" via srgmembers.txt.)
+#
+# THE TRANSFORM: the override's declared desc follows the 21.1 shape and every
+# ARETURN wraps the produced Codec in MapCodec.assumeMapUnsafe — DFU 8's own
+# Codec->MapCodec bridge (its decode rebuilds the WHOLE map from the MapLike via
+# entries(), i.e. same-level fields exactly like the 1.20.1 plain-Codec dispatch;
+# its encode merges the encoded map entries into the RecordBuilder; a codec that
+# already wraps a MapCodecCodec is unwrapped). Stack-neutral (1->1). The pass is
+# fail-fast: static methods skipped, branch frames abort translation (never a
+# guessed frame retype), transitive implements through the jar-local hierarchy only.
+#
+# --- live sites (census, ASM over the raw jars, 2 total):
+#   moonlight-1.20-2.16.10: core/misc/CaveFilter$Type implements PlacementModifierType
+#     (getstatic CaveFilter.CODEC:Codec; areturn — the 5.13 worldgen-parse wall)
+#   supplementaries-1.20-3.1.38: common/worldgen/WaySignStructure$Type implements
+#     StructureType (getstatic WaySignStructure.CODEC:Codec; areturn — the structure
+#     JSON parse lane, same family shape)
+#   call sites of codec() inside either mod: 0 (constant-pool census over both jars).
+net/minecraft/core/particles/ParticleType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/util/valueproviders/FloatProviderType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/util/valueproviders/IntProviderType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/biome/BiomeSource|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/chunk/ChunkGenerator|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/gameevent/PositionSourceType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/blockpredicates/BlockPredicateType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/heightproviders/HeightProviderType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/placement/PlacementModifierType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/StructureType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/placement/StructurePlacementType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/pools/StructurePoolElementType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/templatesystem/PosRuleTestType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/templatesystem/RuleTestType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/templatesystem/StructureProcessorType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;
+net/minecraft/world/level/levelgen/structure/templatesystem/rule/blockentity/RuleBlockEntityModifierType|()Lcom/mojang/serialization/Codec; -> codec|()Lcom/mojang/serialization/MapCodec;|com/mojang/serialization/MapCodec|assumeMapUnsafe|(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;

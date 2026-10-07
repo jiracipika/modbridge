@@ -39,7 +39,10 @@ echo "=== compile rewriter + tests ==="
 check "javac rewriter/src + rewriter/test compiles clean" $?
 
 echo "=== run CtorRetargetTest ==="
-"$JDK/bin/java" -cp "build/ctortargettest:tools/lib/asm-9.7.jar:tools/lib/asm-tree-9.7.jar" \
+# PLATFORM_CP on the RUNTIME classpath too (phase 5.14): the override-return semantic
+# test defines rewritten bytes and drives the real DFU 8 (MapCodec.assumeMapUnsafe +
+# JsonOps) and the real 21.1 PlacementModifierType interface through them.
+"$JDK/bin/java" -cp "build/ctortargettest:tools/lib/asm-9.7.jar:tools/lib/asm-tree-9.7.jar:$PLATFORM_CP" \
   com.modbridge.rewriter.CtorRetargetTest > /tmp/ctortest-out.log 2>&1
 check "all ctor-retarget logic checks pass" $?
 grep -q "checks passed" /tmp/ctortest-out.log

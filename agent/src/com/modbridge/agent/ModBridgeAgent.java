@@ -8,6 +8,7 @@ import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
@@ -71,16 +72,18 @@ public final class ModBridgeAgent {
             return;
         }
         System.out.println(PREFIX + " translating " + jars.size() + " jar(s) from " + sourceDir + " (NeoForge 1.21.1 target)");
+        Set<String> presentMods = collectPresentModIds(modsDir, sourceDir);
+        System.out.println(PREFIX + " present mod ids for from_mod data conditioning: " + presentMods);
         for (Path jar : jars) {
             try {
-                handle(jar, modsDir, cacheDir);
+                handle(jar, modsDir, cacheDir, presentMods);
             } catch (Throwable t) {
                 System.err.println(PREFIX + " FAILED to translate " + jar.getFileName() + " (skipped): " + t);
             }
         }
     }
 
-    private static void handle(Path jar, Path modsDir, Path cacheDir) throws Exception {
+    private static void handle(Path jar, Path modsDir, Path cacheDir, Set<String> presentMods) throws Exception {
         String name = jar.getFileName().toString();
         String hash = sha256(jar);
         // cache key includes the agent jar's own hash: the agent bundles the rules AND
@@ -103,7 +106,7 @@ public final class ModBridgeAgent {
             if (!Files.exists(cacheFile)) {
                 long start = System.currentTimeMillis();
                 System.out.println(PREFIX + " translating " + name + " (sha " + hash.substring(0, 8) + ")...");
-                Rewriter.translate(jar, cacheFile);
+                Rewriter.translate(jar, cacheFile, presentMods);
                 System.out.println(PREFIX + " " + name + " translated in " + (System.currentTimeMillis() - start) + " ms");
             } else {
                 System.out.println(PREFIX + " " + name + " unchanged (sha " + hash.substring(0, 8) + "), using cache");
@@ -125,6 +128,61 @@ public final class ModBridgeAgent {
             if (zip.getEntry("META-INF/mods.toml") != null) return "forge";
             return "none";
         }
+    }
+
+    /**
+     * Every mod id the instance will have loaded: the translated jars already in mods/,
+     * the source jars being translated (their own conditioned content must survive),
+     * plus the platform namespaces. Drives the rewriter's from_mod data strip
+     * (phase 5.14): conditioned data files for ABSENT mods are dropped so vanilla's
+     * strict 21.1 registry loader never sees them (1.20.1's moonlight loader skipped
+     * them at load; 21.1's RegistryDataLoader aborts the whole registry set instead).
+     */
+    private static java.util.Set<String> collectPresentModIds(Path modsDir, Path sourceDir) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        ids.add("minecraft"); // platform namespace: always present
+        ids.add("c"); // the common convention namespace (forge/c tags)
+        for (Path dir : List.of(modsDir, sourceDir)) {
+            try (Stream<Path> s = Files.list(dir)) {
+                for (Path jar : s.filter(p -> p.getFileName().toString().endsWith(".jar")).toList()) {
+                    ids.addAll(modIdsInJar(jar));
+                }
+            } catch (Exception e) {
+                System.err.println(PREFIX + " could not scan " + dir + " for mod ids: " + e);
+            }
+        }
+        return ids;
+    }
+
+    /** modId values from a jar's neoforge.mods.toml / mods.toml (the [[mods]] block's
+     *  modId — the FIRST match in the file: [[dependencies]] blocks carry their own
+     *  modId lines for OPTIONAL compat mods (quark/create/forge measured in supp's
+     *  toml) and those must NOT count as present), fabric.mod.json ('"id": "..."'),
+     *  or none when unparseable */
+    private static List<String> modIdsInJar(Path jar) {
+        List<String> out = new java.util.ArrayList<>();
+        try (ZipFile zip = new ZipFile(jar.toFile())) {
+            java.util.zip.ZipEntry toml = zip.getEntry("META-INF/neoforge.mods.toml");
+            if (toml == null) toml = zip.getEntry("META-INF/mods.toml");
+            if (toml != null) {
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("^\\s*modId\\s*=\\s*\"([^\"]+)\"", java.util.regex.Pattern.MULTILINE)
+                        .matcher(new String(zip.getInputStream(toml).readAllBytes(),
+                                java.nio.charset.StandardCharsets.UTF_8));
+                if (m.find()) out.add(m.group(1)); // first match = the [[mods]] block
+            }
+            java.util.zip.ZipEntry fabric = zip.getEntry("fabric.mod.json");
+            if (fabric != null && out.isEmpty()) {
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("\"id\"\\s*:\\s*\"([^\"]+)\"")
+                        .matcher(new String(zip.getInputStream(fabric).readAllBytes(),
+                                java.nio.charset.StandardCharsets.UTF_8));
+                if (m.find()) out.add(m.group(1));
+            }
+        } catch (Exception e) {
+            System.err.println(PREFIX + " could not read mod ids from " + jar.getFileName() + ": " + e);
+        }
+        return out;
     }
 
     private static String sha256(Path p) throws Exception {

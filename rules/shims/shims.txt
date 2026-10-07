@@ -24,6 +24,7 @@ com/modbridge/shim/IIngredientSerializer
 com/modbridge/shim/ItemCompat
 com/modbridge/shim/ItemStackTagCompat
 com/modbridge/shim/LivingTickEvent
+com/modbridge/shim/LootCompat
 com/modbridge/shim/MessageHandler
 com/modbridge/shim/MobEffectCompat
 com/modbridge/shim/NetworkDirection

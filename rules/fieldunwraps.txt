@@ -1,0 +1,39 @@
+# Field-unwrap rewrites (phase 5.14): vanilla statics whose DESCRIPTOR drifted while
+# the name and semantic role survived. Measured family: BuiltInLootTables — ALL 113
+# fields moved ResourceLocation -> ResourceKey<LootTable> in the 1.20.5 data-component
+# era; the names survive unchanged. 1.20.1 mod bytecode reads getstatic
+# ...:ResourceLocation; and immediately consumes ResourceLocation methods (measured
+# live wall: supp reg/LootTablesInjects "does not have member field
+# 'net.minecraft.resources.ResourceLocation SHIPWRECK_TREASURE'" NoSuchFieldError,
+# fatal through the loot-inject event into "Failed to load datapacks").
+#
+# Format: owner|oldDesc|fieldName -> unwrapOwner|unwrapName|unwrapDesc
+# (keys FINAL-space: matched POST-mapSrg — the 21.1 mojmap names below — after
+# remapClass; the old 1.20.1 desc ResourceLocation is unchanged by remap.)
+#
+# THE TRANSFORM: every matching GETSTATIC gets (1) its constant-pool descriptor
+# rewritten to the 21.1 field type (ResourceKey — the JVM verifier types the pushed
+# value from the CP desc, NOT the resolved field: with the old ResourceLocation desc
+# the inserted call is a VerifyError, live boot 5) and (2) ResourceKey.location()
+# inserted directly after it, restoring the 1.20.1 value type. Stack-neutral (1->1),
+# frame-neutral (the insert is immediate — no frame boundary can fall between the
+# two instructions), maxStack/maxLocals untouched.
+#
+# Census (ASM over the raw jars): 12 distinct field sites in supp, 0 in moonlight:
+#   reg/LootTablesInjects (11): JUNGLE_TEMPLE, WOODLAND_MANSION, SHIPWRECK_SUPPLY,
+#     SHIPWRECK_TREASURE, PILLAGER_OUTPOST, FISHING_TREASURE, END_CITY_TREASURE,
+#     SIMPLE_DUNGEON, ABANDONED_MINESHAFT, NETHER_BRIDGE, STRONGHOLD_CROSSING
+#   common/worldgen/MineshaftElevatorPiece (1): ABANDONED_MINESHAFT
+#   common/block/blocks/UrnBlock (1): EMPTY
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|JUNGLE_TEMPLE -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|WOODLAND_MANSION -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|SHIPWRECK_SUPPLY -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|SHIPWRECK_TREASURE -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|PILLAGER_OUTPOST -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|FISHING_TREASURE -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|END_CITY_TREASURE -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|SIMPLE_DUNGEON -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|ABANDONED_MINESHAFT -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|NETHER_BRIDGE -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|STRONGHOLD_CROSSING -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;
+net/minecraft/world/level/storage/loot/BuiltInLootTables|Lnet/minecraft/resources/ResourceLocation;|EMPTY -> net/minecraft/resources/ResourceKey|location|()Lnet/minecraft/resources/ResourceLocation;

@@ -260,3 +260,12 @@ net/minecraft/world/item/ItemStack|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecra
 # PackCompat.create (owner+desc swap; the call was already INVOKESTATIC so the
 # kind "static" re-statement is a no-op on the opcode and no receiver moves).
 net/minecraft/server/packs/repository/Pack|(Ljava/lang/String;Lnet/minecraft/network/chat/Component;ZLnet/minecraft/server/packs/repository/Pack$ResourcesSupplier;Lnet/minecraft/server/packs/repository/Pack$Info;Lnet/minecraft/server/packs/PackType;Lnet/minecraft/server/packs/repository/Pack$Position;ZLnet/minecraft/server/packs/repository/PackSource;)Lnet/minecraft/server/packs/repository/Pack;|create -> @SHIM@/PackCompat|(Ljava/lang/String;Lnet/minecraft/network/chat/Component;ZLnet/minecraft/server/packs/repository/Pack$ResourcesSupplier;Lnet/minecraft/server/packs/repository/Pack$Metadata;Lnet/minecraft/server/packs/PackType;Lnet/minecraft/server/packs/repository/Pack$Position;ZLnet/minecraft/server/packs/repository/PackSource;)Lnet/minecraft/server/packs/repository/Pack;|static
+
+# --- phase 5.14 loot-inject lane: 1.20.1 LootTableReference.lootTableReference
+# (m_79776_, ResourceLocation) is NestedLootTable.lootTableReference(ResourceKey
+# <LootTable>) on 21.1 (class rename + param widening; javap'd both jars). The
+# single measured site (moonlight RegHelperImpl$1.addTableReference, fed supp's
+# BuiltInLootTables ids) retargets to the shared LootCompat bridge, which
+# reconstructs the ResourceKey over minecraft:loot_table. Key is RAW-space owner +
+# POST-mapSrg name (the retarget lookup runs after mapSrg in applyMemberRenames).
+net/minecraft/world/level/storage/loot/entries/LootTableReference|(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Builder;|lootTableReference -> @SHIM-SHARED@/LootCompat|(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Builder;|static

@@ -1207,3 +1207,116 @@ shared), refmap 3/3, srg-resolver 4/4, linkie clean, matrix 16/16. Counters
 repairs=22, holder unwraps=22, bare wraps=6, member renames=352, super swaps=10;
 ml = 489 classes, ctor retargets=4, method drops=8, interface repairs=40, holder
 unwraps=5, member renames=81.
+
+## Phase 5.14 — the CaveFilter codec wall falls; the ladder crosses worldgen parse,
+## loot, conditions and trades (2026-10-07, FINAL campaign day, honest partial)
+
+The 5.13 head-of-list wall is GONE — and it was the head of a FAMILY. javap diff
+over the two vanilla jars: exactly 16 worldgen "type" interfaces changed their
+abstract `codec()` return kind between 1.20.1 and 21.1 (Codec m_xxx_() ->
+MapCodec codec(); ParticleType, Float/IntProviderType, BiomeSource,
+ChunkGenerator, PositionSourceType, BlockPredicateType, HeightProviderType,
+PlacementModifierType, StructureType, StructurePlacementType,
+StructurePoolElementType, PosRuleTestType, RuleTestType, StructureProcessorType,
+RuleBlockEntityModifierType). Mod impls measured: 2 (ml CaveFilter$Type, supp
+WaySignStructure$Type — both "getstatic CODEC; areturn"), 0 call sites.
+
+What fell (each measured-then-fixed; full ladder: testenv/evidence/
+phase514-cavefilter-codec.txt):
+
+1. THE OVERRIDE-RETURN REWRITE MECHANISM (the slice's deliverable; rules/
+   overridereturns.txt, all 16 family entries): the override's declared desc
+   follows the 21.1 shape and every ARETURN wraps the produced Codec in
+   MapCodec.assumeMapUnsafe — DFU 8's own Codec->MapCodec bridge (its decode
+   rebuilds the whole map from the MapLike: same-level fields, exactly the 1.20.1
+   plain-Codec dispatch; its encode merges same-level entries). Stack-neutral;
+   the generic signature follows the descriptor; fail-fast on branch frames and
+   statics; transitive implements through the jar-local hierarchy only. SEMANTIC
+   PROOF: a gate test defines rewritten bytes and drives the REAL DFU 8 through
+   them (codec() returns a MapCodec; decode reads same-level fields with the
+   "type" key present; encode merges without a value key).
+2. from_mod conditioned-data strip (new agent wiring + Rewriter resource pass):
+   vanilla 21.1 loads moonlight's CUSTOM datapack registries (soft_fluids,
+   map_markers) through the strict RegistryDataLoader — 1.20.1 moonlight loaded
+   them through its own from_mod-aware lenient loader; supp's 80+ conditioned
+   compat files (~30 absent mods) were FATAL ("Failed to load datapacks"). The
+   agent collects the instance's present mod ids (first modId per jar —
+   [[dependencies]] modId lines poisoned the first attempt) and the rewriter
+   drops data .json files with (1) a top-level from_mod naming an absent mod or
+   (2) a body referencing any absent-mod id inside data/<ns>/moonlight/** (supp's
+   own teas carry no from_mod but their ids name farmersrespite items).
+3. Loot-table field drift (NEW PASS rules/fieldunwraps.txt): ALL 113
+   BuiltInLootTables fields moved ResourceLocation -> ResourceKey<LootTable>
+   (names survive). 12 measured sites in supp. The getstatic's constant-pool desc
+   is rewritten to ResourceKey (the JVM verifier types the pushed value from the
+   CP desc — the unwrap alone was a live VerifyError, boot 5) and
+   ResourceKey.location() is inserted immediately after (stack- and frame-
+   neutral). Link-time proof: the gate defines the rewritten class against the
+   real 21.1 field.
+4. LootTableReference -> NestedLootTable + lootTableReference(ResourceLocation)
+   -> lootTableReference(ResourceKey<LootTable>): shared shim LootCompat (the
+   resource key is reconstructed over Registries.LOOT_TABLE); one measured call
+   site (ml RegHelperImpl$1).
+5. CraftingHelper shim completed (phase 5.7's shim was two members short of the
+   family): processConditions(JsonObject,String,IContext) (moonlight's resource-
+   conditions mixin injected into vanilla's SimplePreparableReloadListener calls
+   it at datapack reload) and the getCondition fallback to the inert serializer
+   registry — translated condition serializers (supp "supplementaries:flag")
+   read through register() produce REAL 21.1 IConditions (the forge interface was
+   typerenamed onto neoforge's, same test(IContext)) so flags evaluate for real.
+6. MapRegistry.dispatch CCE (NEW PASS fixMapRegistryDispatch, pinned): DFU 8
+   KEPT the erased Codec.dispatch descriptor (the MapCodec bound lives only in
+   generics) but KeyDispatchCodec's decode casts the produced value codec to
+   MapCodec — moonlight's registered RecordCodecBuilder products are
+   MapCodecCodec wrappers (CCE at the villager-trades reload). Fix: the value
+   lambda returns the REAL MapCodec via assumeMapUnsafe (DFU unwraps its own
+   wrapper), Codec.dispatch -> dispatchMap, and the result wraps back through
+   MapCodec.codec() so dispatch's declared Codec return and every consumer stay
+   byte-identical to 1.20.1. Two live-boot corrections are pinned in the gate:
+   the indy's raw samMethodType is Function.apply(Object)Object (only the
+   instantiated type carries the Codec bound), and the call keeps its
+   INVOKESPECIAL(itf) shape / the wrap is INVOKEVIRTUAL (MapCodec is a class —
+   an INVOKEINTERFACE there is an ICCE, live boot 10).
+7. Accessor-rename scoping fix (phase-4 regression, second live hit): the
+   derived-name accessor METHOD rename now applies ONLY to accessors WITHOUT an
+   explicit @Accessor("name") value — explicit-value accessors resolve their
+   target by the value at runtime, and renaming the method orphaned every
+   consumer call site (moonlight DispenserBlockAccessor.getDispenserRegistry
+   NSME at the dispenser lane; live boots 11-12).
+
+LADDER RESULT: both containers construct; ALL registry events dispatch; CommonSetup
+completes; the pack lane runs; runtime resource generation succeeds; the worldgen
+datapack parse CROSSES the placement-modifier dispatch (0 AbstractMethodError
+anywhere), structure types, and the moonlight custom registries; loot injects,
+resource conditions and villager trades evaluate. The stop, at the reload event
+that follows, is precisely scoped:
+
+  ClassNotFoundException: net.minecraft.core.dispenser.AbstractProjectileDispenseBehavior
+  (supp BombsBehavior extends it; 21.1 replaced the abstract extend-and-override
+  class with the data-driven ProjectileDispenseBehavior(ProjectileItem,
+  DispenseConfig) — the template-method pattern has no mechanical successor; the
+  bridge is a semantic shim reimplementing the 1.20.1 template over the 21.1
+  surface, plus supp's AbstractProjectileBehaviorAccessor retarget)
+
+Non-fatal, documented: moonlight's dynamic-asset recipe generation hits the
+1.20.5 data-recipe API drift (NoClassDefFoundError net/minecraft/data/recipes/
+FinishedRecipe, caught by moonlight — the pack still builds; "Finished runtime
+resources generation").
+
+Done was NOT reached (rcon not reached — honest partial); the ladder stops six
+walls past the 5.13 close.
+
+Gates: ctor-retarget 3/3 (357 checks: +52 override-return incl. the DFU-8
+semantic proof, +11 from_mod strip, +8 field-unwraps incl. link-time proof, +7
+mapRegistryDispatch), shims 3/3 (277 + 22; 71 classes + 3 shared: LootCompat
+added, CraftingHelper extended), refmap 3/3, srg-resolver 4/4, matrix 16/16.
+RUNBOOK additions: (1) translate.sh reuses build/rewriter when present — rm -rf
+it after editing Rewriter.java or the translation silently uses stale classes
+(bit twice this slice); (2) the JVM verifier types a getstatic's pushed value
+from the CONSTANT-POOL descriptor, not the resolved field — descriptor-drifted
+field reads need BOTH the desc rewrite and the unwrap call; (3) an accessor
+method rename must be scoped to derived-name accessors (explicit-value accessors
+resolve by value; renaming their method orphans consumer call sites); (4) when
+reproducing 1.20.1 leniency that 21.1 made strict, prefer reproducing the
+1.20.1 SEMANTIC (skip absent-mod content) at translation time over patching the
+21.1 loader.

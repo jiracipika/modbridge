@@ -294,3 +294,4 @@ net/minecraft/world/item/FireworkRocketItem$Shape	net/minecraft/world/item/compo
 # in either mod queries sections: 0 SERIALIZER field refs, the only m_5550_ call
 # sites are the override itself + the client-only ClientHelperImpl).
 net/minecraft/server/packs/metadata/pack/PackMetadataSectionSerializer	net/minecraft/server/packs/metadata/MetadataSectionSerializer
+net/minecraft/world/level/storage/loot/entries/LootTableReference	net/minecraft/world/level/storage/loot/entries/NestedLootTable

@@ -12,6 +12,7 @@ import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.Handle;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InvokeDynamicInsnNode;
@@ -101,6 +102,15 @@ public final class CtorRetargetTest {
         metadataSectionOverrideUntouchedElsewhere();
         superSwapMechanism();
         fieldRetargetMechanism();
+        overrideReturnMechanism();
+        overrideReturnTransitive();
+        overrideReturnFailsFastOnFrames();
+        overrideReturnUntouchedShapes();
+        overrideReturnRealSiteAndRules();
+        overrideReturnDfu8Semantic();
+        fromModDataStrip();
+        fieldUnwrapMechanism();
+        mapRegistryDispatchFix();
     }
 
     Rewriter rewriterWithRule() throws IOException {
@@ -1548,5 +1558,606 @@ public final class CtorRetargetTest {
             i++;
         }
         return -1;
+    }
+
+    // ------------------------------------------- override-return rewrites (phase 5.14,
+    // ------------------------------------------- the Codec -> MapCodec codec() drift family)
+
+    static final String PMT = "net/minecraft/world/level/levelgen/placement/PlacementModifierType";
+    static final String OLD_CODEC_DESC = "()Lcom/mojang/serialization/Codec;";
+    static final String NEW_MAPCODEC_DESC = "()Lcom/mojang/serialization/MapCodec;";
+    static final String ASSUME_MAP_UNSAFE =
+            "(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;";
+    /** the 16 drifted 1.20.1 SRG ids (javap census over both vanilla jars); every one
+     *  must map to "codec" in the shipped srgmembers.txt or the pass never matches */
+    static final String[] DRIFT_FAMILY_SRG_IDS = {
+            "m_7652_", "m_146529_", "m_146560_", "m_5820_", "m_6909_", "m_142341_",
+            "m_190452_", "m_161992_", "m_191869_", "m_226884_", "m_205049_",
+            "m_210553_", "m_74214_", "m_74324_", "m_74481_", "m_276894_"
+    };
+
+    /** the exact raw 1.20.1 shape of both live sites (javap'd CaveFilter$Type +
+     *  WaySignStructure$Type): a virtual codec() override returning a static CODEC
+     *  field — getstatic; areturn, straight-line, no frames. */
+    ClassNode overrideReturnHost(String className, String itf) {
+        ClassNode cn = new ClassNode();
+        cn.name = className;
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        if (itf != null) cn.interfaces.add(itf);
+        cn.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "CODEC",
+                "Lcom/mojang/serialization/Codec;", null, null));
+        MethodNode ctor = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        ctor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "java/lang/Object", "<init>", "()V", false));
+        ctor.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(ctor);
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC, "codec", OLD_CODEC_DESC,
+                "()Lcom/mojang/serialization/Codec<Ltest/Payload;>;", null);
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC, className,
+                "CODEC", "Lcom/mojang/serialization/Codec;"));
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        mn.maxStack = 1;
+        mn.maxLocals = 1;
+        cn.methods.add(mn);
+        return cn;
+    }
+
+    static MethodNode codecMethod(ClassNode cn) {
+        for (MethodNode m : cn.methods) {
+            if ("codec".equals(m.name)) return m;
+        }
+        throw new AssertionError("no codec() in " + cn.name);
+    }
+
+    void overrideReturnMechanism() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addOverrideReturnRules(List.of(PMT + "|" + OLD_CODEC_DESC
+                + " -> codec|" + NEW_MAPCODEC_DESC
+                + "|com/mojang/serialization/MapCodec|assumeMapUnsafe|" + ASSUME_MAP_UNSAFE));
+        check(r.overrideReturns.size() == 1, "overridereturns: rule parses (owner + 6-tuple)");
+        ClassNode cn = overrideReturnHost("test/Type", PMT);
+        r.rewriteOverrideReturns(cn);
+        MethodNode mn = codecMethod(cn);
+        check(NEW_MAPCODEC_DESC.equals(mn.desc),
+                "overridereturns: the override's desc follows the 21.1 shape ()MapCodec");
+        MethodInsnNode wrap = first(mn, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKESTATIC
+                        && "com/mojang/serialization/MapCodec".equals(m.owner)
+                        && "assumeMapUnsafe".equals(m.name)
+                        && ASSUME_MAP_UNSAFE.equals(m.desc));
+        check(wrap != null && wrap.getNext() instanceof InsnNode i && i.getOpcode() == Opcodes.ARETURN,
+                "overridereturns: every areturn is fronted by MapCodec.assumeMapUnsafe");
+        check(mn.maxStack == 1 && mn.maxLocals == 1,
+                "overridereturns: stack-neutral (maxStack/maxLocals untouched, wrap is 1->1)");
+        check(r.overrideReturnsApplied == 1, "overridereturns: counter = 1");
+        // the generic signature follows the descriptor (reflection metadata must not lie)
+        check(mn.signature != null
+                        && mn.signature.equals("()Lcom/mojang/serialization/MapCodec<Ltest/Payload;>;"),
+                "overridereturns: the generic signature follows the new descriptor");
+        // idempotent-ish: a second pass over the REWRITTEN shape is a no-op (desc no longer matches)
+        r.rewriteOverrideReturns(cn);
+        check(r.overrideReturnsApplied == 1,
+                "overridereturns: the rewritten shape cannot double-wrap (desc already 21.1)");
+    }
+
+    void overrideReturnTransitive() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addOverrideReturnRules(List.of(PMT + "|" + OLD_CODEC_DESC
+                + " -> codec|" + NEW_MAPCODEC_DESC
+                + "|com/mojang/serialization/MapCodec|assumeMapUnsafe|" + ASSUME_MAP_UNSAFE));
+        // a jar-local abstract base carries the interface; the host only extends it
+        r.jarHierarchy.put("test/BaseType",
+                new String[]{"java/lang/Object", PMT, "some/other/Marker"});
+        ClassNode cn = overrideReturnHost("test/SubType", null);
+        cn.superName = "test/BaseType";
+        r.rewriteOverrideReturns(cn);
+        check(NEW_MAPCODEC_DESC.equals(codecMethod(cn).desc),
+                "overridereturns: transitive through a jar-local base (superName walk)");
+        // platform supers are unindexed: the walk never guesses past the jar
+        ClassNode guarded = overrideReturnHost("test/Guarded", null);
+        guarded.superName = "net/minecraft/world/level/biome/BiomeSource";
+        r.rewriteOverrideReturns(guarded);
+        check(OLD_CODEC_DESC.equals(codecMethod(guarded).desc) && r.overrideReturnsApplied == 1,
+                "overridereturns: unindexed (platform) supers are NOT walked (never guessed)");
+    }
+
+    void overrideReturnFailsFastOnFrames() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addOverrideReturnRules(List.of(PMT + "|" + OLD_CODEC_DESC
+                + " -> codec|" + NEW_MAPCODEC_DESC
+                + "|com/mojang/serialization/MapCodec|assumeMapUnsafe|" + ASSUME_MAP_UNSAFE));
+        ClassNode cn = overrideReturnHost("test/Brancy", PMT);
+        MethodNode mn = codecMethod(cn);
+        // branchy body: codec() with a fallback branch carrying a merge frame
+        mn.instructions.clear();
+        LabelNode lElse = new LabelNode();
+        LabelNode lEnd = new LabelNode();
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC, "java/lang/System", "out",
+                "Ljava/io/PrintStream;"));
+        mn.instructions.add(new InsnNode(Opcodes.ICONST_0));
+        mn.instructions.add(new JumpInsnNode(Opcodes.IFEQ, lElse));
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC, "test/Brancy", "CODEC",
+                "Lcom/mojang/serialization/Codec;"));
+        mn.instructions.add(new JumpInsnNode(Opcodes.GOTO, lEnd));
+        mn.instructions.add(lElse);
+        mn.instructions.add(new FrameNode(Opcodes.F_FULL, 0, new Object[]{"test/Brancy"},
+                1, new Object[]{"com/mojang/serialization/Codec"}));
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC, "test/Brancy", "FALLBACK",
+                "Lcom/mojang/serialization/Codec;"));
+        mn.instructions.add(lEnd);
+        mn.instructions.add(new InsnNode(Opcodes.ARETURN));
+        try {
+            r.rewriteOverrideReturns(cn);
+            check(false, "overridereturns: branch frames fail fast (never a guessed retype)");
+        } catch (IllegalStateException e) {
+            check(e.getMessage() != null && e.getMessage().contains("branch frames"),
+                    "overridereturns: branch frames fail fast (never a guessed retype)");
+        }
+    }
+
+    void overrideReturnUntouchedShapes() throws IOException {
+        Rewriter r = new Rewriter();
+        r.addOverrideReturnRules(List.of(PMT + "|" + OLD_CODEC_DESC
+                + " -> codec|" + NEW_MAPCODEC_DESC
+                + "|com/mojang/serialization/MapCodec|assumeMapUnsafe|" + ASSUME_MAP_UNSAFE));
+        // no drifted interface: a codec() with the old shape stays untouched
+        ClassNode plain = overrideReturnHost("test/Plain", null);
+        r.rewriteOverrideReturns(plain);
+        check(OLD_CODEC_DESC.equals(codecMethod(plain).desc) && r.overrideReturnsApplied == 0,
+                "overridereturns: classes outside the family untouched");
+        // static method with the same name+desc: not an override, skipped
+        ClassNode statik = overrideReturnHost("test/Static", PMT);
+        codecMethod(statik).access |= Opcodes.ACC_STATIC;
+        r.rewriteOverrideReturns(statik);
+        check(OLD_CODEC_DESC.equals(codecMethod(statik).desc) && r.overrideReturnsApplied == 0,
+                "overridereturns: static methods are never rewritten (an override never is)");
+        // abstract re-declaration: desc-only rewrite, no body to wrap
+        ClassNode abs = new ClassNode();
+        abs.name = "test/AbstractType";
+        abs.version = Opcodes.V17;
+        abs.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT;
+        abs.superName = "java/lang/Object";
+        abs.interfaces.add(PMT);
+        MethodNode am = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_ABSTRACT,
+                "codec", OLD_CODEC_DESC, null, null);
+        abs.methods.add(am);
+        r.rewriteOverrideReturns(abs);
+        check(NEW_MAPCODEC_DESC.equals(am.desc) && r.overrideReturnsApplied == 1,
+                "overridereturns: abstract re-declarations follow the desc (no body)");
+    }
+
+    /** the shipped rules + the REAL measured sites: the 16-interface family table,
+     *  every SRG id mapping to "codec", each rule key verified against the LIVE 21.1
+     *  platform class (abstract MapCodec codec()), and the real CaveFilter$Type shape
+     *  rewritten by the real rule. */
+    void overrideReturnRealSiteAndRules() throws IOException {
+        Rewriter rs = new Rewriter();
+        rs.loadRules(Path.of("rules")); // the shipped overridereturns.txt + srgmembers.txt
+        check(rs.overrideReturns.size() == 16,
+                "overridereturns: the shipped family table has all 16 drifted interfaces");
+        for (String id : DRIFT_FAMILY_SRG_IDS) {
+            if (!"codec".equals(rs.srgOrNull(id))) {
+                check(false, "overridereturns: srgmembers maps " + id + " -> codec");
+                return;
+            }
+        }
+        check(true, "overridereturns: all 16 family SRG ids map to codec (srgmembers.txt)");
+        int platformVerified = 0;
+        for (String owner : rs.overrideReturns.keySet()) {
+            try (java.io.InputStream is = ClassLoader.getSystemResourceAsStream(owner + ".class")) {
+                check(is != null, "overridereturns: " + owner + " exists on the 21.1 platform CP");
+                if (is == null) return;
+                ClassNode p = new ClassNode();
+                new org.objectweb.asm.ClassReader(is.readAllBytes()).accept(p, 0);
+                boolean iface = (p.access & Opcodes.ACC_INTERFACE) != 0;
+                MethodNode found = null;
+                for (MethodNode m : p.methods) {
+                    if ("codec".equals(m.name) && NEW_MAPCODEC_DESC.equals(m.desc)
+                            && (m.access & Opcodes.ACC_ABSTRACT) != 0) { found = m; break; }
+                }
+                // 14 of the family are interfaces; BiomeSource + ChunkGenerator are
+                // abstract CLASSES (matched by the pass through the superName walk)
+                check(found != null && (iface || (p.access & Opcodes.ACC_ABSTRACT) != 0),
+                        "overridereturns: " + owner.substring(owner.lastIndexOf('/') + 1)
+                                + " declares abstract MapCodec codec() on 21.1");
+                if (found != null) platformVerified++;
+            } catch (Exception e) {
+                check(false, "overridereturns: " + owner + " platform check threw " + e);
+                return;
+            }
+        }
+        check(platformVerified == 16,
+                "overridereturns: all 16 rule keys verified against the live 21.1 platform classes");
+        // the REAL moonlight site shape (javap'd 1.20.1 jar): direct implementor,
+        // getstatic CODEC + areturn — rewritten by the shipped rule
+        ClassNode cave = overrideReturnHost(
+                "net/mehvahdjukaar/moonlight/core/misc/CaveFilter$Type", PMT);
+        rs.remapClass(cave); // the pass runs post-remap; the interface name does not drift
+        rs.rewriteOverrideReturns(cave);
+        MethodNode m0 = codecMethod(cave);
+        check("codec".equals(m0.name) && NEW_MAPCODEC_DESC.equals(m0.desc),
+                "overridereturns: the real CaveFilter$Type shape rewrites under the shipped rules");
+        check(first(m0, MethodInsnNode.class, x -> x.getOpcode() == Opcodes.INVOKESTATIC
+                        && "assumeMapUnsafe".equals(x.name)) != null,
+                "overridereturns: the real site's areturn is wrapped in assumeMapUnsafe");
+    }
+
+    /** the SEMANTIC proof: define the rewritten bytes in this JVM and drive the real
+     *  DFU 8 (platform CP) through them — codec() returns a MapCodec, decodes a
+     *  dispatched map WITH the type key present (whole-map semantics = the 1.20.1
+     *  plain-Codec dispatch), and encodes the entries back at the same level. */
+    void overrideReturnDfu8Semantic() throws Exception {
+        Rewriter r = new Rewriter();
+        r.addOverrideReturnRules(List.of(PMT + "|" + OLD_CODEC_DESC
+                + " -> codec|" + NEW_MAPCODEC_DESC
+                + "|com/mojang/serialization/MapCodec|assumeMapUnsafe|" + ASSUME_MAP_UNSAFE));
+        // build the CODEC with the 21.1 RecordCodecBuilder (same shape the 1.20.1
+        // bodies wrapped — RecordCodecBuilder.create returns Codec on BOTH DFUs)
+        com.mojang.serialization.Codec<Payload> payloadCodec =
+                com.mojang.serialization.codecs.RecordCodecBuilder.create(i -> i.group(
+                        com.mojang.serialization.Codec.INT.fieldOf("n").forGetter(p -> p.n)
+                ).apply(i, Payload::new));
+        ClassNode cn = overrideReturnHost("test/RealType", PMT);
+        r.rewriteOverrideReturns(cn);
+        byte[] bytes = toBytesTest(cn);
+        Class<?> type = defineInChild("test.RealType", bytes);
+        Object typeInstance = type.getDeclaredConstructor().newInstance();
+        java.lang.reflect.Field cf = type.getField("CODEC");
+        cf.set(null, payloadCodec);
+        java.lang.reflect.Method codec = type.getMethod("codec");
+        Object result = codec.invoke(typeInstance);
+        check(result instanceof com.mojang.serialization.MapCodec,
+                "overridereturns/DFU8: the rewritten override returns a real MapCodec");
+        com.mojang.serialization.MapCodec<Payload> mc =
+                (com.mojang.serialization.MapCodec<Payload>) result;
+        // decode: the dispatched map carries the type key alongside the fields —
+        // exactly the KeyDispatchCodec shape vanilla hands codec() on 21.1
+        com.google.gson.JsonObject dispatched = new com.google.gson.JsonObject();
+        dispatched.addProperty("type", "moonlight:cave_filter");
+        dispatched.addProperty("n", 42);
+        com.mojang.serialization.MapLike<com.google.gson.JsonElement> ml =
+                com.mojang.serialization.JsonOps.INSTANCE.getMap(dispatched).result().orElseThrow();
+        Payload decoded = mc.decode(com.mojang.serialization.JsonOps.INSTANCE, ml)
+                .result().orElseThrow();
+        check(decoded.n == 42,
+                "overridereturns/DFU8: decode reads same-level fields with the type key present");
+        // encode: the entries land at the same level (no nested wrapper object)
+        com.mojang.serialization.RecordBuilder<com.google.gson.JsonElement> rb =
+                com.mojang.serialization.JsonOps.INSTANCE.mapBuilder();
+        mc.encode(new Payload(7), com.mojang.serialization.JsonOps.INSTANCE, rb);
+        com.google.gson.JsonObject out =
+                (com.google.gson.JsonObject) rb.build(com.mojang.serialization.JsonOps.INSTANCE.empty())
+                        .result().orElseThrow();
+        check(out.get("n").getAsInt() == 7 && !out.has("value"),
+                "overridereturns/DFU8: encode merges same-level entries (no compressed value key)");
+    }
+
+    static class Payload {
+        final int n;
+        Payload(int n) { this.n = n; }
+    }
+
+    static byte[] toBytesTest(ClassNode cn) {
+        java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.StringWriter());
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        cn.accept(cw);
+        pw.flush();
+        return cw.toByteArray();
+    }
+
+    static Class<?> defineInChild(String dotted, byte[] bytes) throws Exception {
+        ClassLoader parent = CtorRetargetTest.class.getClassLoader();
+        class ChildLoader extends java.net.URLClassLoader {
+            ChildLoader() { super(new java.net.URL[0], parent); }
+            Class<?> define(String name, byte[] b) { return defineClass(name, b, 0, b.length); }
+        }
+        return new ChildLoader().define(dotted, bytes);
+    }
+
+    // ------------------------------------------- from_mod conditioned-data strip (phase 5.14)
+
+    void fromModDataStrip() {
+        // CLI mode (no present-mod set): nothing is ever stripped
+        Rewriter cli = new Rewriter();
+        Map<String, byte[]> cliEntries = fromModEntries();
+        cli.stripFromModConditionedData(cliEntries);
+        check(cliEntries.size() == 6 && cli.fromModDrops == 0,
+                "from_mod strip: no present-mod set -> no filtering (CLI mode)");
+
+        Rewriter r = new Rewriter();
+        r.presentMods = java.util.Set.of("minecraft", "supplementaries", "moonlight");
+        Map<String, byte[]> entries = fromModEntries();
+        r.stripFromModConditionedData(entries);
+        check(!entries.containsKey("data/supplementaries/moonlight/soft_fluids/algae.json")
+                        && !entries.containsKey("data/supplementaries/moonlight/map_markers/aether_portal.json"),
+                "from_mod strip: absent-mod entries dropped (goodending/aether)");
+        check(entries.containsKey("data/supplementaries/moonlight/soft_fluids/sap.json"),
+                "from_mod strip: present-mod entry kept (from_mod: supplementaries)");
+        check(entries.containsKey("data/supplementaries/moonlight/map_markers/stronghold.json"),
+                "from_mod strip: unconditioned data file kept");
+        check(entries.containsKey("data/minecraft/moonlight/villager_trades/flax.json"),
+                "from_mod strip: malformed json never guessed at, left untouched");
+        check(entries.containsKey("assets/supplementaries/x.json"),
+                "from_mod strip: non-data entries never scanned");
+        check(r.fromModDrops == 2, "from_mod strip: counter = 2");
+
+        // rule 2 (measured boot-2 set): moonlight files WITHOUT from_mod whose body
+        // references absent-mod ids — supp's own teas, the thermal/autumnity sap
+        Rewriter r2 = new Rewriter();
+        r2.presentMods = java.util.Set.of("minecraft", "supplementaries", "moonlight");
+        Map<String, byte[]> e2 = new java.util.LinkedHashMap<>();
+        e2.put("data/supplementaries/moonlight/soft_fluids/black_tea.json",
+                "{\"id\":\"farmersrespite:black_tea\",\"food\":{\"item\":\"farmersrespite:black_tea\"}}".getBytes());
+        e2.put("data/supplementaries/moonlight/soft_fluids/builders_tea.json",
+                "{\"containers\":[{\"filled\":[\"create:builders_tea\"],\"empty\":\"minecraft:glass_bottle\"}]}".getBytes());
+        e2.put("data/supplementaries/moonlight/soft_fluids/lumisene.json",
+                ("{\"containers\":[{\"filled\":[\"supplementaries:lumisene_bottle\"]}],"
+                        + "\"flowing_texture\":\"moonlight:block/soft_fluids/potion_flow\",\"capacity\":\"BOTTLE\"}").getBytes());
+        e2.put("data/supplementaries/moonlight/map_markers/stronghold.json",
+                "{\"target_block\":{\"block\":\"minecraft:stone\",\"predicate_type\":\"minecraft:block_match\"}}".getBytes());
+        e2.put("data/minecraft/moonlight/villager_trades/flax.json",
+                "{\"trade\":\"farmersrespite:black_tea\"}".getBytes());
+        r2.stripFromModConditionedData(e2);
+        check(!e2.containsKey("data/supplementaries/moonlight/soft_fluids/black_tea.json")
+                        && !e2.containsKey("data/supplementaries/moonlight/soft_fluids/builders_tea.json"),
+                "from_mod strip rule2: absent-mod references dropped (farmersrespite/create)");
+        check(e2.containsKey("data/supplementaries/moonlight/soft_fluids/lumisene.json")
+                        && e2.containsKey("data/supplementaries/moonlight/map_markers/stronghold.json"),
+                "from_mod strip rule2: present-mod/vanilla-only bodies kept (textures + BUCKET shape untouched)");
+        check(!e2.containsKey("data/minecraft/moonlight/villager_trades/flax.json"),
+                "from_mod strip rule2: the whole data/<ns>/moonlight/** scope is covered (trade lane too)");
+        check(r2.fromModDrops == 3, "from_mod strip rule2: counter = 3");
+    }
+
+    /** fieldunwraps.txt (phase 5.14): BuiltInLootTables ResourceKey<Location> drift */
+    void fieldUnwrapMechanism() throws Exception {
+        // the shipped rules: 12 entries, one unwrap shape
+        Rewriter rs = new Rewriter();
+        rs.loadRules(Path.of("rules"));
+        check(rs.fieldUnwraps.size() == 12, "fieldunwraps: the shipped table has 12 entries");
+
+        // LINK-TIME proof of the mechanism against stub classes defined in this JVM:
+        // the rewritten getstatic desc + inserted location() must pass the verifier and
+        // run — the live boot caught exactly this shape as a VerifyError before the
+        // desc rewrite was added (the JVM types the stack from the CP desc)
+        Rewriter rm = new Rewriter();
+        rm.addFieldUnwrapRules(List.of("test/StubTable|Ltest/StubLoc;|SHIPWRECK_TREASURE"
+                + " -> test/StubKey|location|()Ltest/StubLoc;"));
+        ClassNode key = new ClassNode();
+        key.name = "test/StubKey";
+        key.version = Opcodes.V17;
+        key.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        key.superName = "java/lang/Object";
+        MethodNode loc = new MethodNode(Opcodes.ACC_PUBLIC, "location", "()Ltest/StubLoc;", null, null);
+        loc.instructions.add(new TypeInsnNode(Opcodes.NEW, "test/StubLoc"));
+        loc.instructions.add(new InsnNode(Opcodes.DUP));
+        loc.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "test/StubLoc", "<init>", "()V", false));
+        loc.instructions.add(new InsnNode(Opcodes.ARETURN));
+        key.methods.add(loc);
+        MethodNode keyCtor = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        keyCtor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        keyCtor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "java/lang/Object", "<init>", "()V", false));
+        keyCtor.instructions.add(new InsnNode(Opcodes.RETURN));
+        key.methods.add(keyCtor);
+        ClassNode table = new ClassNode();
+        table.name = "test/StubTable";
+        table.version = Opcodes.V17;
+        table.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        table.superName = "java/lang/Object";
+        table.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "SHIPWRECK_TREASURE",
+                "Ltest/StubKey;", null, null));
+        MethodNode tableCtor = new MethodNode(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
+        tableCtor.instructions.add(new TypeInsnNode(Opcodes.NEW, "test/StubKey"));
+        tableCtor.instructions.add(new InsnNode(Opcodes.DUP));
+        tableCtor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "test/StubKey", "<init>", "()V", false));
+        tableCtor.instructions.add(new FieldInsnNode(Opcodes.PUTSTATIC,
+                "test/StubTable", "SHIPWRECK_TREASURE", "Ltest/StubKey;"));
+        tableCtor.instructions.add(new InsnNode(Opcodes.RETURN));
+        table.methods.add(tableCtor);
+        class Child extends java.net.URLClassLoader {
+            Child() { super(new java.net.URL[0], CtorRetargetTest.class.getClassLoader()); }
+            Class<?> define(String name, byte[] b) { return defineClass(name, b, 0, b.length); }
+        }
+        Child child = new Child();
+        child.define("test.StubLoc", toBytesTest(stubLoc()));
+        child.define("test.StubKey", toBytesTest(key));
+        child.define("test.StubTable", toBytesTest(table));
+
+        ClassNode cn = new ClassNode();
+        cn.name = "test/LootHost";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode mn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "check", "(Z)Z", null, null);
+        mn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC,
+                "test/StubTable", "SHIPWRECK_TREASURE", "Ltest/StubLoc;"));
+        mn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "test/StubLoc", "toString", "()Ljava/lang/String;", false));
+        mn.instructions.add(new InsnNode(Opcodes.POP));
+        mn.instructions.add(new VarInsnNode(Opcodes.ILOAD, 0));
+        mn.instructions.add(new InsnNode(Opcodes.IRETURN));
+        mn.maxStack = 2;
+        mn.maxLocals = 1;
+        cn.methods.add(mn);
+        rm.rewriteFieldUnwraps(cn);
+        MethodInsnNode unwrap = first(mn, MethodInsnNode.class,
+                m -> m.getOpcode() == Opcodes.INVOKEVIRTUAL
+                        && "test/StubKey".equals(m.owner)
+                        && "location".equals(m.name)
+                        && "()Ltest/StubLoc;".equals(m.desc));
+        check(unwrap != null && unwrap.getNext() instanceof MethodInsnNode mi
+                        && "toString".equals(mi.name) && "test/StubLoc".equals(mi.owner),
+                "fieldunwraps: location() inserted right after the getstatic (consumer unchanged)");
+        FieldInsnNode gs = first(mn, FieldInsnNode.class, f -> true);
+        check(gs != null && "SHIPWRECK_TREASURE".equals(gs.name)
+                        && "Ltest/StubKey;".equals(gs.desc),
+                "fieldunwraps: the getstatic desc follows the 21.1 field type (verifier "
+                        + "types from the CP desc), name kept");
+        check(rm.fieldUnwrapsApplied == 1, "fieldunwraps: counter = 1");
+        check(mn.maxStack == 2, "fieldunwraps: stack-neutral (maxStack untouched)");
+        Class<?> host = child.define("test.LootHost", toBytesTest(cn));
+        Object out = host.getDeclaredMethod("check", boolean.class).invoke(null, Boolean.TRUE);
+        check(Boolean.TRUE.equals(out),
+                "fieldunwraps: the rewritten class verifies and runs (link-time proof)");
+
+        // the REAL LootTablesInjects shape (javap'd): getstatic SHIPWRECK_TREASURE
+        // (post-mapSrg) under the SHIPPED rules — desc rewritten + unwrap inserted
+        ClassNode real = new ClassNode();
+        real.name = "test/LootReal";
+        real.version = Opcodes.V17;
+        real.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        real.superName = "java/lang/Object";
+        MethodNode rmn = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "ship", "(Z)Z", null, null);
+        rmn.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC,
+                "net/minecraft/world/level/storage/loot/BuiltInLootTables", "SHIPWRECK_TREASURE",
+                "Lnet/minecraft/resources/ResourceLocation;"));
+        rmn.instructions.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                "net/minecraft/resources/ResourceLocation", "toString", "()Ljava/lang/String;", false));
+        rmn.instructions.add(new InsnNode(Opcodes.POP));
+        rmn.instructions.add(new VarInsnNode(Opcodes.ILOAD, 0));
+        rmn.instructions.add(new InsnNode(Opcodes.IRETURN));
+        real.methods.add(rmn);
+        rs.rewriteFieldUnwraps(real);
+        check(first(rmn, MethodInsnNode.class, m -> "location".equals(m.name)
+                        && "net/minecraft/resources/ResourceKey".equals(m.owner)) != null
+                && "Lnet/minecraft/resources/ResourceKey;".equals(
+                        first(rmn, FieldInsnNode.class, f -> true).desc),
+                "fieldunwraps: the real SHIPWRECK_TREASURE site rewrites under the shipped rules");
+        // an unruled getstatic passes through
+        ClassNode other = new ClassNode();
+        other.name = "test/Other";
+        other.version = Opcodes.V17;
+        other.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        other.superName = "java/lang/Object";
+        MethodNode om = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "get",
+                "()Lnet/minecraft/resources/ResourceLocation;", null, null);
+        om.instructions.add(new FieldInsnNode(Opcodes.GETSTATIC,
+                "net/minecraft/world/level/storage/loot/BuiltInLootTables", "SPAWNER_BONES",
+                "Lnet/minecraft/resources/ResourceLocation;"));
+        om.instructions.add(new InsnNode(Opcodes.ARETURN));
+        other.methods.add(om);
+        rs.rewriteFieldUnwraps(other);
+        check(count(other.methods.get(0), MethodInsnNode.class, m -> true) == 0,
+                "fieldunwraps: unruled fields untouched");
+    }
+
+    /** mapRegistryDispatch (phase 5.14): the pinned moonlight MapRegistry.dispatch fix */
+    void mapRegistryDispatchFix() {
+        // the exact translated shape (javap'd): dispatch(Function)Codec with the value
+        // lambda "checkcast Codec; areturn", the LambdaMetafactory indy, and the
+        // Codec.dispatch default-method call (invokespecial itf: MapRegistry implements
+        // Codec and this is a same-class default-method super-call)
+        ClassNode cn = new ClassNode();
+        cn.name = "net/mehvahdjukaar/moonlight/api/misc/MapRegistry";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        cn.interfaces.add("com/mojang/serialization/Codec");
+        MethodNode lambda = new MethodNode(Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC
+                | Opcodes.ACC_SYNTHETIC, "lambda$dispatch$3",
+                "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;", null, null);
+        lambda.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        lambda.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST,
+                "com/mojang/serialization/Codec"));
+        lambda.instructions.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(lambda);
+        MethodNode dispatch = new MethodNode(Opcodes.ACC_PUBLIC, "dispatch",
+                "(Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;", null, null);
+        Handle impl = new Handle(Opcodes.H_INVOKESTATIC,
+                "net/mehvahdjukaar/moonlight/api/misc/MapRegistry", "lambda$dispatch$3",
+                "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;", false);
+        org.objectweb.asm.Type sam = org.objectweb.asm.Type.getMethodType(
+                "(Ljava/lang/Object;)Ljava/lang/Object;");
+        org.objectweb.asm.Type inst = org.objectweb.asm.Type.getMethodType(
+                "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;");
+        dispatch.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        dispatch.instructions.add(new InvokeDynamicInsnNode("apply",
+                "()Ljava/util/function/Function;",
+                new Handle(Opcodes.H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory",
+                        "metafactory",
+                        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;",
+                        false),
+                sam, impl, inst));
+        dispatch.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "com/mojang/serialization/Codec", "dispatch",
+                "(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;",
+                true));
+        dispatch.instructions.add(new InsnNode(Opcodes.ARETURN));
+        dispatch.maxStack = 3;
+        cn.methods.add(dispatch);
+        new Rewriter().fixMapRegistryDispatch(cn);
+        InvokeDynamicInsnNode id = first(dispatch, InvokeDynamicInsnNode.class, x -> true);
+        check(id != null && id.bsmArgs[0] instanceof org.objectweb.asm.Type rawSam
+                        && "(Ljava/lang/Object;)Ljava/lang/Object;".equals(
+                                ((org.objectweb.asm.Type) rawSam).getDescriptor())
+                        && id.bsmArgs[2] instanceof org.objectweb.asm.Type newInst
+                        && "(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;".equals(
+                                ((org.objectweb.asm.Type) newInst).getDescriptor())
+                        && id.bsmArgs[1] instanceof Handle h
+                        && "(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;".equals(h.getDesc()),
+                "mapRegistryDispatch: instantiated type + impl handle MapCodec-typed "
+                        + "(the raw samMethodType erasure stays Function.apply(Object)Object)");
+        check("()Ljava/util/function/Function;".equals(id.desc),
+                "mapRegistryDispatch: the indy's own interface shape untouched (Function)");
+        MethodInsnNode unwrap = first(lambda, MethodInsnNode.class,
+                m -> "assumeMapUnsafe".equals(m.name));
+        check(unwrap != null && unwrap.getPrevious() instanceof TypeInsnNode t
+                        && t.getOpcode() == Opcodes.CHECKCAST,
+                "mapRegistryDispatch: the value lambda unwraps via assumeMapUnsafe (DFU "
+                        + "unwraps MapCodecCodec itself)");
+        check("(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;".equals(lambda.desc),
+                "mapRegistryDispatch: the lambda's declared desc follows the SAM");
+        MethodInsnNode dm = first(dispatch, MethodInsnNode.class, m -> "dispatchMap".equals(m.name));
+        check(dm != null && dm.getOpcode() == Opcodes.INVOKESPECIAL && dm.itf
+                        && "com/mojang/serialization/Codec".equals(dm.owner)
+                        && "(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/MapCodec;".equals(dm.desc),
+                "mapRegistryDispatch: Codec.dispatch became the Codec.dispatchMap default "
+                        + "super-call (same INVOKESPECIAL(itf) shape; MapCodec is a class, "
+                        + "an INVOKEINTERFACE there is an ICCE — live boot 10)");
+        MethodInsnNode wrap = first(dispatch, MethodInsnNode.class,
+                m -> "codec".equals(m.name) && "com/mojang/serialization/MapCodec".equals(m.owner));
+        check(wrap != null && wrap.getOpcode() == Opcodes.INVOKEVIRTUAL && !wrap.itf
+                        && wrap.getNext() instanceof InsnNode i && i.getOpcode() == Opcodes.ARETURN,
+                "mapRegistryDispatch: the result wraps back through MapCodec.codec() "
+                        + "(INVOKEVIRTUAL — a class method) — the declared Codec return "
+                        + "and every consumer unchanged");
+        check("(Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;".equals(dispatch.desc),
+                "mapRegistryDispatch: dispatch's own desc untouched (shape-neutral outward)");
+    }
+
+    static ClassNode stubLoc() {
+        ClassNode cn = new ClassNode();
+        cn.name = "test/StubLoc";
+        cn.version = Opcodes.V17;
+        cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER;
+        cn.superName = "java/lang/Object";
+        MethodNode ctor = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        ctor.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        ctor.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL,
+                "java/lang/Object", "<init>", "()V", false));
+        ctor.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(ctor);
+        return cn;
+    }
+
+    static Map<String, byte[]> fromModEntries() {
+        Map<String, byte[]> m = new java.util.LinkedHashMap<>();
+        m.put("data/supplementaries/moonlight/soft_fluids/algae.json",
+                "{\"color\":\"#42a073\",\"from_mod\":\"goodending\",\"containers\":[]}".getBytes());
+        m.put("data/supplementaries/moonlight/map_markers/aether_portal.json",
+                "{\"from_mod\":\"aether\",\"target_block\":{\"block\":\"aether:aether_portal\"}}".getBytes());
+        m.put("data/supplementaries/moonlight/soft_fluids/sap.json",
+                "{\"from_mod\":\"supplementaries\",\"containers\":[]}".getBytes());
+        m.put("data/supplementaries/moonlight/map_markers/stronghold.json",
+                "{\"target_block\":{\"block\":\"minecraft:stone\"}}".getBytes());
+        m.put("data/minecraft/moonlight/villager_trades/flax.json", "{not json".getBytes());
+        m.put("assets/supplementaries/x.json", "{\"from_mod\":\"aether\"}".getBytes());
+        return m;
     }
 }

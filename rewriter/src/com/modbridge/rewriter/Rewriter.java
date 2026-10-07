@@ -143,6 +143,49 @@ public class Rewriter {
     final Set<String> ctorRetargetOwners = new HashSet<>();
     /** indy SAM shape rewrites (phase 5.13): interfaceOwner|samName|samDesc -> [newName, newSamDesc] */
     final Map<String, String[]> indySams = new HashMap<>();
+    /** override-return rewrites (phase 5.14, rules/overridereturns.txt): vanilla worldgen
+     *  "type" interfaces whose abstract codec() changed RETURN TYPE across versions
+     *  (1.20.1 Codec m_xxx_() -> 21.1 MapCodec codec(); the 21.1 dispatch
+     *  KeyDispatchCodec consumes MapCodecs). A 1.20.1 override with the old shape stops
+     *  overriding once the platform renames it (the SRG id maps to "codec" via
+     *  srgmembers.txt) and the runtime dispatch dies with AbstractMethodError (measured
+     *  wall: moonlight CaveFilter$Type during worldgen JSON parse).
+     *  interfaceOwner -> [oldDesc, newName, newDesc, wrapOwner, wrapName, wrapDesc].
+     *  The override's declared desc follows the 21.1 shape and every areturn wraps the
+     *  produced old-type value in the 21.1 bridge (MapCodec.assumeMapUnsafe — DFU 8's
+     *  own whole-map adapter, the same-level-fields semantics the 1.20.1 plain-Codec
+     *  dispatch had). Stack-neutral (1->1); the pass fails fast on branch frames
+     *  (never guesses a frame retype) and skips static methods (an override never is). */
+    final Map<String, String[]> overrideReturns = new HashMap<>();
+    int overrideReturnsApplied;
+    /** jar-local class hierarchy {name -> [superName, itf...]} backing the transitive
+     *  implements check of the override-return pass (a mod class may extend a jar-local
+     *  abstract base that carries the interface). Built once in run() when rules exist;
+     *  platform supers are unindexed on purpose — the walk never guesses past the jar. */
+    final Map<String, String[]> jarHierarchy = new HashMap<>();
+    /** present mod ids on the target instance (phase 5.14 from_mod strip): the drop-in
+     *  agent collects them from every jar it installs plus the jars it translates. When
+     *  non-null, data-pack JSON entries carrying a top-level "from_mod": "<modid>"
+     *  (moonlight's conditioned-content convention) whose mod is ABSENT are dropped at
+     *  translation — exactly the 1.20.1 semantic (moonlight's own from_mod-aware loader
+     *  skipped them) and the difference between boot and fatal: 21.1 loads these files
+     *  through vanilla RegistryDataLoader, which aborts the whole registry set on the
+     *  first unknown id (measured: supp's 80 conditioned soft_fluids/map_markers files
+     *  referencing ~30 uninstalled mods). Null = no filtering (CLI mode without a mods
+     *  dir). */
+    Set<String> presentMods;
+    int fromModDrops;
+    /** field-unwrap call sites (rules/fieldunwraps.txt, phase 5.14): vanilla statics
+     *  whose DESCRIPTOR drifted while the value stayed semantically the same locator.
+     *  Measured family: BuiltInLootTables — all 113 fields moved ResourceLocation ->
+     *  ResourceKey<LootTable> in 1.20.5+; the NAMES survive. 1.20.1 mod bytecode reads
+     *  getstatic ...:ResourceLocation and consumes ResourceLocation methods — the fix
+     *  inserts ResourceKey.location() after every rule-matching GETSTATIC (stack- and
+     *  frame-neutral: the insert is immediate, so no frame ever observes the transient
+     *  ResourceKey slot). owner|oldDesc|name -> unwrapOwner|unwrapName|unwrapDesc
+     *  (keys FINAL-space: matched post-mapSrg, after remapClass). */
+    final Map<String, String[]> fieldUnwraps = new HashMap<>();
+    int fieldUnwrapsApplied;
     /** method-body drops for whole methods whose 1.20.1 semantics are already covered
      *  elsewhere on 21.1 (or are documented no-ops): owner|desc|name -> typed return */
     final Set<String> methodDrops = new HashSet<>();
@@ -233,6 +276,8 @@ public class Rewriter {
         addMemberTargets(readLines(rulesDir.resolve("membertargets-1211.txt")));
         addSharedShims(readLinesOptional(rulesDir.resolve("shims-shared.txt")));
         addIndySamRules(readLinesOptional(rulesDir.resolve("indysams.txt")));
+        addOverrideReturnRules(readLinesOptional(rulesDir.resolve("overridereturns.txt")));
+        addFieldUnwrapRules(readLinesOptional(rulesDir.resolve("fieldunwraps.txt")));
         loadShimsFromDir(rulesDir.resolve("shims"));
         printRuleStats();
     }
@@ -256,6 +301,8 @@ public class Rewriter {
         addMemberTargets(resourceLinesOptional("/rules/membertargets-1211.txt"));
         addSharedShims(resourceLinesOptional("/rules/shims-shared.txt"));
         addIndySamRules(resourceLinesOptional("/rules/indysams.txt"));
+        addOverrideReturnRules(resourceLinesOptional("/rules/overridereturns.txt"));
+        addFieldUnwrapRules(resourceLinesOptional("/rules/fieldunwraps.txt"));
         loadShimsFromClasspath("/rules/shims");
         printRuleStats();
     }
@@ -266,13 +313,90 @@ public class Rewriter {
         r.run(in, out);
     }
 
+    /** drop-in entry with the instance's present mod ids (phase 5.14 from_mod strip —
+     *  see the presentMods javadoc) */
+    public static void translate(Path in, Path out, Set<String> presentMods) throws Exception {
+        Rewriter r = new Rewriter();
+        r.loadRulesFromClasspath();
+        r.presentMods = presentMods;
+        r.run(in, out);
+    }
+
+    /** phase 5.14: moonlight's conditioned-content convention — a data-pack JSON with a
+     *  TOP-LEVEL "from_mod": "<modid>" loads only when that mod is present. 1.20.1
+     *  enforced that in moonlight's own loader (lenient); 21.1 loads these files through
+     *  vanilla's strict RegistryDataLoader (fatal on the first unknown id — measured
+     *  boot: "Failed to load datapacks, can't proceed" over supp's ~40 compat entries).
+     *  The strip reproduces the 1.20.1 semantic at translation time: absent-mod entries
+     *  are dropped from the translated jar. TWO measured rules (fail-soft otherwise):
+     *    (1) any data .json with a top-level string "from_mod" naming an absent mod;
+     *    (2) data/<ns>/moonlight/** files whose body references ANY id-shaped string
+     *        ("ns:path") of an absent mod — supp's own teas carry no from_mod but their
+     *        "id"/containers name the compat mod's items (farmersrespite:black_tea,
+     *        create:builders_tea, thermal:sap, the_bumblezone:sugar_water_bottle).
+     *    Both are 1.20.1-exact: that content is exactly what moonlight's lenient
+     *    loader skipped; present-mod and vanilla-only files pass untouched.
+     *  Malformed JSON and every other file pass untouched. */
+    void stripFromModConditionedData(Map<String, byte[]> entries) {
+        if (presentMods == null) return;
+        List<String> drop = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+            String name = e.getKey();
+            if (!name.startsWith("data/") || !name.endsWith(".json")) continue;
+            Object parsed;
+            try {
+                parsed = Json.parse(new String(e.getValue(), StandardCharsets.UTF_8));
+            } catch (Json.JsonError ignored) {
+                continue; // not parseable — never guess, leave untouched
+            }
+            if (!(parsed instanceof Map<?, ?> m)) continue;
+            if (m.get("from_mod") instanceof String modid && !presentMods.contains(modid)) {
+                drop.add(name);
+            } else if (name.startsWith("data/") && name.matches("data/[^/]+/moonlight/.*")
+                    && referencesAbsentMod(m, presentMods)) {
+                drop.add(name);
+            }
+        }
+        for (String name : drop) {
+            entries.remove(name);
+            fromModDrops++;
+        }
+        if (fromModDrops > 0) {
+            System.out.println("from_mod strip: dropped " + fromModDrops
+                    + " conditioned data file(s) for absent mods");
+        }
+    }
+
+    /** rule 2 scan: any String value in the JSON tree shaped "ns:path" (single colon,
+     *  lowercase namespace, id/texture-path value) whose namespace is absent */
+    private static boolean referencesAbsentMod(Object node, Set<String> presentMods) {
+        if (node instanceof String s) {
+            int i = s.indexOf(':');
+            if (i <= 0 || i == s.length() - 1 || s.indexOf(':', i + 1) >= 0) return false;
+            return s.substring(0, i).matches("[a-z0-9_.-]+")
+                    && s.substring(i + 1).matches("[a-z0-9_/.-]+")
+                    && !presentMods.contains(s.substring(0, i));
+        }
+        if (node instanceof Map<?, ?> m) {
+            for (Object v : m.values()) {
+                if (referencesAbsentMod(v, presentMods)) return true;
+            }
+        } else if (node instanceof List<?> l) {
+            for (Object v : l) {
+                if (referencesAbsentMod(v, presentMods)) return true;
+            }
+        }
+        return false;
+    }
+
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d unwrap, %d wrap, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims, %d shared%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d unwrap, %d wrap, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims, %d shared, %d indy-sams, %d override-returns%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
                 holderUnwraps.size(), bareWraps.size(), ctorRetargets.size(), methodDrops.size(), superSwaps.size(), classlist.size(),
                 interfaces1211.size(),
-                mojMemberRenames.size(), memberTargets.size(), shims.size(), sharedShims.size());
+                mojMemberRenames.size(), memberTargets.size(), shims.size(), sharedShims.size(),
+                indySams.size(), overrideReturns.size());
     }
 
     /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
@@ -778,6 +902,11 @@ public class Rewriter {
         }
         Set<String> serverMixins = serverSideMixinClasses(mixinConfigs);
 
+        // phase-5.14: jar-local hierarchy for the override-return transitive check
+        if (!overrideReturns.isEmpty()) {
+            buildJarHierarchy(entries);
+        }
+
         List<String> names = new ArrayList<>(entries.keySet());
         for (String name : names) {
             if (!name.endsWith(".class")) continue;
@@ -813,6 +942,7 @@ public class Rewriter {
         entries.put("pack.mcmeta", generatePackMeta(packMeta).getBytes(StandardCharsets.UTF_8));
 
         injectShims(entries);
+        stripFromModConditionedData(entries);
 
         if (out.getParent() != null) {
             Files.createDirectories(out.getParent());
@@ -828,9 +958,10 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, holder unwraps=%d, bare wraps=%d, member renames=%d, super swaps=%d%n",
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, holder unwraps=%d, bare wraps=%d, member renames=%d, super swaps=%d, override returns=%d, indy sams=%d, field unwraps=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
-                methodDropsApplied, interfaceRepairsApplied, holderUnwrapsApplied, bareWrapsApplied, memberRenamesApplied, superswapsApplied);
+                methodDropsApplied, interfaceRepairsApplied, holderUnwrapsApplied, bareWrapsApplied, memberRenamesApplied, superswapsApplied,
+                overrideReturnsApplied, indySamsApplied, fieldUnwrapsApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         for (String line : neutralizationLog) {
@@ -889,6 +1020,16 @@ public class Rewriter {
         }
         applyMemberRenames(cn);
         remapClass(cn);
+        // must run AFTER remapClass: the override matches its post-mapSrg name ("codec")
+        // and the drift-family interface names in final space (identical to raw — worldgen
+        // class names do not drift)
+        rewriteOverrideReturns(cn);
+        // same ordering contract: fieldunwraps keys are FINAL space (post-mapSrg field
+        // names — SHIPWRECK_TREASURE etc. — the old 1.20.1 desc is unchanged by remap)
+        rewriteFieldUnwraps(cn);
+        // pinned single-site pass (moonlight MapRegistry, the villager-trades dispatch):
+        // names are final-space identical (no renames touch them)
+        fixMapRegistryDispatch(cn);
         // must run AFTER remapClass: indysams keys are final-space (post-mapSrg indy
         // name, final-space bsm types)
         rewriteIndySams(cn);
@@ -990,11 +1131,21 @@ public class Rewriter {
      * (invokeTryCatchFire -> tryCatchFire). That name is 1.20.1 dev-space; when Mojang
      * renamed the member across to 1.21.1 the derivation must follow
      * (mojmemberrenames.txt), or the accessor stops matching (InvalidAccessorException).
+     *
+     * Phase 5.14 (measured wall: moonlight DispenserBlockAccessor — the rename broke
+     * every CONSUMER call site with an NSME at the dispenser lane): an accessor with
+     * an EXPLICIT @Accessor("name") value resolves its target by that value at
+     * runtime, never by derivation — renaming its METHOD buys nothing and orphans the
+     * call sites (the source name is what every consumer compiled against). The
+     * derived-name rename therefore applies ONLY to derived-name accessors; explicit-
+     * value accessors keep their compiled name (their annotation value is what the
+     * remapAnnotationStrings path maps).
      */
     void remapAccessorMembers(ClassNode cn) {
         if (mojMemberRenames.isEmpty()) return;
         for (MethodNode mn : cn.methods) {
             if (hasAccessorAnnotation(mn)) {
+                if (explicitAccessorValue(mn) != null) continue;
                 Matcher m = ACCESSOR_METHOD_NAME.matcher(mn.name);
                 if (!m.matches()) continue;
                 String derived = Character.toLowerCase(m.group(2).charAt(0)) + m.group(2).substring(1);
@@ -2438,6 +2589,251 @@ public class Rewriter {
                 }
                 indySamsApplied++;
             }
+        }
+    }
+
+    /** override-return rewrites (rules/overridereturns.txt, phase 5.14): the drift
+     *  family is the 16 vanilla worldgen "type" interfaces whose abstract codec()
+     *  changed return kind between 1.20.1 and 21.1 (Codec m_xxx_() -> MapCodec codec(),
+     *  measured by javap diff over the two vanilla jars). A mod override keeps the old
+     *  shape after the SRG->mojmap rename, stops overriding, and vanilla's
+     *  KeyDispatchCodec.decode hits an AbstractMethodError when it dispatches the type
+     *  (live wall: moonlight CaveFilter$Type during worldgen JSON parse).
+     *  THE TRANSFORM (per matched override):
+     *    - declared desc follows the 21.1 shape (rule oldDesc -> newDesc);
+     *    - every ARETURN gets MapCodec.assumeMapUnsafe inserted in front of it —
+     *      DFU 8's own Codec->MapCodec bridge: decode rebuilds the WHOLE map from the
+     *      MapLike (same-level fields, exactly what the 1.20.1 plain-Codec dispatch
+     *      handed the inner codec) and encode merges the encoded map entries —
+     *      stack-neutral (1 -> 1), maxStack/maxLocals untouched.
+     *  GUARDS (fail fast, never guess):
+     *    - the method must be virtual (an override is never static);
+     *    - straight-line bodies only: any FrameNode in the method aborts the class
+     *      translation (a branch frame carries the old return type; the pass refuses
+     *      to retype frames it cannot prove — measured family bodies are 2-4 insns);
+     *    - interface match is transitive through the JAR-LOCAL hierarchy only
+     *      (jarHierarchy; platform supers unindexed, never guessed past the jar).
+     *  Format: interfaceOwner|oldDesc -> newName|newDesc|wrapOwner|wrapName|wrapDesc
+     *  (the interface owner is the SAME spelling raw and final space — vanilla worldgen
+     *  class names do not drift; the METHOD name is matched post-remapClass, i.e. the
+     *  21.1 mojmap name after applyMemberRenames mapped the SRG id). */
+    void addOverrideReturnRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#") || line.isBlank()) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad overridereturns line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 2 || val.length != 5) throw new IOException("bad overridereturns line: " + line);
+            overrideReturns.put(key[0], new String[] {key[1], val[0], val[1], val[2], val[3], val[4]});
+        }
+    }
+
+    void addFieldUnwrapRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#") || line.isBlank()) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad fieldunwraps line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 3 || val.length != 3) throw new IOException("bad fieldunwraps line: " + line);
+            fieldUnwraps.put(key[0] + "|" + key[1] + "|" + key[2], val);
+        }
+    }
+
+    /** field-unwrap pass (rules/fieldunwraps.txt, phase 5.14 — see the fieldUnwraps
+     *  javadoc): every rule-matching GETSTATIC gets (1) its CONSTANT-POOL descriptor
+     *  rewritten to the 21.1 field type (the unwrap receiver type — the JVM verifier
+     *  types the pushed value from the CP desc, NOT the resolved field, so the old
+     *  ResourceLocation desc makes the inserted call a VerifyError; measured live),
+     *  and (2) the unwrap call inserted right after, restoring the 1.20.1 value type.
+     *  The insert is IMMEDIATE (no frame boundary can fall between the two
+     *  instructions) and the value the rest of the method sees is again the 1.20.1
+     *  type — the original frames stay correct. */
+    void rewriteFieldUnwraps(ClassNode cn) {
+        if (fieldUnwraps.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            for (AbstractInsnNode n : mn.instructions.toArray()) {
+                if (!(n instanceof FieldInsnNode f) || f.getOpcode() != Opcodes.GETSTATIC) continue;
+                String[] rule = fieldUnwraps.get(f.owner + "|" + f.desc + "|" + f.name);
+                if (rule == null) continue;
+                f.desc = "L" + rule[0] + ";";
+                mn.instructions.insert(f, new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                        rule[0], rule[1], rule[2], false));
+                fieldUnwrapsApplied++;
+            }
+        }
+    }
+
+    /** map-registry dispatch fix (phase 5.14, PINNED single-site pass — the
+     *  fixMetadataSectionOverride precedent): moonlight's MapRegistry implements Codec
+     *  and builds its dispatch codec as
+     *    Codec.dispatch(keyFn, valueFn)         (1.20.1 / DFU 6: valueFn -> Codec)
+     *  where valueFn is the lambda "checkcast Codec; areturn" over the registered
+     *  subtype codecs. DFU 8 KEPT the erased dispatch descriptor (the MapCodec bound
+     *  lives only in generics — javap'd), so the site links, but KeyDispatchCodec's
+     *  decode now CASTS the produced value codec to MapCodec (live boot wall:
+     *  "MapCodec$MapCodecCodec cannot be cast to MapCodec" at the villager-trades
+     *  reload — the registered codecs are RecordCodecBuilder-built MapCodecCodec
+     *  wrappers on DFU 8). THE FIX, shape-neutral outward:
+     *    - the lambda returns the REAL MapCodec: assumeMapUnsafe inserted after its
+     *      checkcast (DFU's own bridge UNWRAPS a MapCodecCodec to the MapCodec it
+     *      wraps), lambda + indy SAM/instantiated types follow to (Object)MapCodec;
+     *    - Codec.dispatch -> Codec.dispatchMap (erased desc return MapCodec);
+     *    - the result is wrapped back with MapCodec.codec() so dispatch's declared
+     *      return (Codec) and every consumer (ModItemListing.CODEC typed Codec) stay
+     *      byte-identical to 1.20.1. Straight-line method: fail fast on frames. */
+    void fixMapRegistryDispatch(ClassNode cn) {
+        if (!cn.name.equals("net/mehvahdjukaar/moonlight/api/misc/MapRegistry")) {
+            return;
+        }
+        MethodNode dispatch = null;
+        for (MethodNode mn : cn.methods) {
+            if ("dispatch".equals(mn.name)
+                    && "(Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;".equals(mn.desc)) {
+                dispatch = mn;
+                break;
+            }
+        }
+        if (dispatch == null) {
+            throw new IllegalStateException("mapRegistryDispatch: the pinned MapRegistry"
+                    + ".dispatch(Function)Codec shape did not match (drift)");
+        }
+        for (AbstractInsnNode n : dispatch.instructions) {
+            if (n instanceof FrameNode) {
+                throw new IllegalStateException("mapRegistryDispatch: branch frames in the "
+                        + "pinned straight-line dispatch body (drift)");
+            }
+        }
+        boolean indyFixed = false;
+        boolean callFixed = false;
+        for (AbstractInsnNode n : dispatch.instructions) {
+            if (n instanceof InvokeDynamicInsnNode id && id.bsm != null
+                    && "java/lang/invoke/LambdaMetafactory".equals(id.bsm.getOwner())
+                    && id.bsmArgs != null && id.bsmArgs.length == 3
+                    && id.bsmArgs[2] instanceof org.objectweb.asm.Type instantiated
+                    && "()Ljava/util/function/Function;".equals(id.desc)
+                    && "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;".equals(instantiated.getDescriptor())) {
+                // javac emits samMethodType = the RAW Function.apply erasure
+                // (Object)Object — only the INSTANTIATED type carries the Codec bound
+                org.objectweb.asm.Type mapCodecSam = org.objectweb.asm.Type.getMethodType(
+                        "(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;");
+                id.bsmArgs[2] = mapCodecSam;
+                if (id.bsmArgs[1] instanceof Handle h
+                        && "(Ljava/lang/Object;)Lcom/mojang/serialization/Codec;".equals(h.getDesc())) {
+                    id.bsmArgs[1] = new Handle(h.getTag(), h.getOwner(), h.getName(),
+                            "(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;", h.isInterface());
+                    for (MethodNode mn : cn.methods) {
+                        if (mn.name.equals(h.getName()) && mn.desc.equals(h.getDesc())) {
+                            mn.desc = "(Ljava/lang/Object;)Lcom/mojang/serialization/MapCodec;";
+                            // the stored registry values are Codecs (DFU 8 wraps every
+                            // RecordCodecBuilder product in MapCodecCodec): unwrap to
+                            // the MapCodec the 21.1 dispatch demands
+                            for (AbstractInsnNode i : mn.instructions) {
+                                if (i instanceof TypeInsnNode t && t.getOpcode() == Opcodes.CHECKCAST
+                                        && "com/mojang/serialization/Codec".equals(t.desc)) {
+                                    mn.instructions.insert(i, new MethodInsnNode(
+                                            Opcodes.INVOKESTATIC,
+                                            "com/mojang/serialization/MapCodec", "assumeMapUnsafe",
+                                            "(Lcom/mojang/serialization/Codec;)Lcom/mojang/serialization/MapCodec;",
+                                            false));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                indyFixed = true;
+            }
+            if (n instanceof MethodInsnNode m
+                    && "com/mojang/serialization/Codec".equals(m.owner)
+                    && "dispatch".equals(m.name)
+                    && "(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/Codec;".equals(m.desc)) {
+                // dispatchMap is a default method on the Codec INTERFACE — MapRegistry
+                // implements Codec, so the same-class default super-call keeps its
+                // original INVOKESPECIAL(itf) shape (an INVOKEINTERFACE would be an
+                // ICCE: MapCodec is a CLASS, not an interface — live boot 10)
+                m.name = "dispatchMap";
+                m.desc = "(Ljava/util/function/Function;Ljava/util/function/Function;)Lcom/mojang/serialization/MapCodec;";
+                // wrap back: dispatch's declared return (Codec) is consumed by every
+                // consumer unchanged — codec() is a CLASS method on MapCodec
+                dispatch.instructions.insert(m, new MethodInsnNode(Opcodes.INVOKEVIRTUAL,
+                        "com/mojang/serialization/MapCodec", "codec",
+                        "()Lcom/mojang/serialization/Codec;", false));
+                callFixed = true;
+            }
+        }
+        if (!indyFixed || !callFixed) {
+            throw new IllegalStateException("mapRegistryDispatch: shapes not found (indy="
+                    + indyFixed + ", call=" + callFixed + ") - drift");
+        }
+    }
+
+    void rewriteOverrideReturns(ClassNode cn) {
+        if (overrideReturns.isEmpty()) return;
+        // transitive target set: this class's interfaces + superName chain, walked
+        // through the jar-local hierarchy only (platform supers are unindexed)
+        Set<String> targets = new LinkedHashSet<>();
+        for (String itf : cn.interfaces) collectOverrideReturnTargets(itf, 0, targets);
+        collectOverrideReturnTargets(cn.superName, 0, targets);
+        targets.retainAll(overrideReturns.keySet());
+        if (targets.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            if ((mn.access & Opcodes.ACC_STATIC) != 0) continue;
+            String[] rule = null;
+            for (String t : targets) {
+                String[] r = overrideReturns.get(t);
+                if (r[1].equals(mn.name) && r[0].equals(mn.desc)) { rule = r; break; }
+            }
+            if (rule == null) continue;
+            boolean abstractBody = (mn.access & Opcodes.ACC_ABSTRACT) != 0 || mn.instructions == null
+                    || mn.instructions.size() == 0;
+            if (!abstractBody) {
+                for (AbstractInsnNode n : mn.instructions) {
+                    if (n instanceof FrameNode) {
+                        throw new IllegalStateException("overridereturns: " + cn.name
+                                + "#" + mn.name + mn.desc + " has branch frames - the body "
+                                + "rewrite is only proven for straight-line codec() bodies "
+                                + "(measured family shape); refusing to guess a frame retype");
+                    }
+                    if (n.getOpcode() == Opcodes.ARETURN) {
+                        mn.instructions.insertBefore(n, new MethodInsnNode(Opcodes.INVOKESTATIC,
+                                rule[3], rule[4], rule[5], false));
+                    }
+                }
+            }
+            mn.desc = rule[2];
+            // the generic signature is reflection metadata (the JVM dispatches on the
+            // descriptor) but it must not lie: ()Codec<P> -> ()MapCodec<P> — both the
+            // raw form and the generic-parameterized form (Codec< is the same class)
+            if (mn.signature != null && mn.signature.contains("Lcom/mojang/serialization/Codec")) {
+                mn.signature = mn.signature
+                        .replace("Lcom/mojang/serialization/Codec<", "Lcom/mojang/serialization/MapCodec<")
+                        .replace("Lcom/mojang/serialization/Codec;", "Lcom/mojang/serialization/MapCodec;");
+            }
+            overrideReturnsApplied++;
+        }
+    }
+
+    private void collectOverrideReturnTargets(String name, int depth, Set<String> out) {
+        if (name == null || depth > 32 || !out.add(name)) return;
+        String[] sig = jarHierarchy.get(name);
+        if (sig == null) return; // platform or non-jar class: never guess past the jar
+        collectOverrideReturnTargets(sig[0], depth + 1, out);
+        for (int i = 1; i < sig.length; i++) collectOverrideReturnTargets(sig[i], depth + 1, out);
+    }
+
+    /** header-only parse of every class in the jar (no accept() walk) for the
+     *  override-return transitive implements check */
+    private void buildJarHierarchy(Map<String, byte[]> entries) throws IOException {
+        for (Map.Entry<String, byte[]> e : entries.entrySet()) {
+            if (!e.getKey().endsWith(".class")) continue;
+            ClassReader cr = new ClassReader(e.getValue());
+            String[] itfs = cr.getInterfaces();
+            String[] sig = new String[1 + itfs.length];
+            sig[0] = cr.getSuperName();
+            System.arraycopy(itfs, 0, sig, 1, itfs.length);
+            jarHierarchy.put(cr.getClassName(), sig);
         }
     }
 
