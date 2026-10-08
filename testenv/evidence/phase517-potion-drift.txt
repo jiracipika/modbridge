@@ -1,0 +1,167 @@
+phase 5.17 — the potion member-drift wall falls (bare-universe PotionUtils bridges;
+honest partial: two NBT-decode tooltip members deferred, food-drift family named 5.18)
+
+HEAD at phase start: 5915ecf (5.16). First action: the 5.16 matrix debt —
+scripts/run-matrix.sh with the 5.16 agent: **16 passed, 0 failed**
+(testenv/evidence/matrix-run-517debt.txt). The debt named at 5.16 is retired.
+
+=========================================================================
+1. CENSUS (raw 1.20.1 jars; python constant-pool scan + javap per class)
+=========================================================================
+8 PotionUtils members across 14 classes (moonlight 3, supplementaries 11).
+srgmembers.txt mapping verified for every id below.
+
+  m_43579_ getPotion(ItemStack)Potion      — THE WALL (ml SoftFluidStack.fromItem:376)
+                                             + AshLayerBlock, BambooSpikesBlock x2,
+                                             BambooSpikesBehavior, BambooSpikesTippedItem,
+                                             TippedBambooSpikesRecipe x2, JEICompat$Spikes,
+                                             ILightable
+  m_43577_ getPotion(CompoundTag)Potion    — BambooSpikesBlock x2, BambooSpikesBlockTile
+  m_43559_ getColor(Potion)I               — BambooSpikesBlockTile
+  m_43575_ getColor(ItemStack)I            — TippedSpikesColor, BambooSpikesTippedItem
+  m_43547_ getMobEffects(ItemStack)List    — JEICompat$Spikes
+  m_43549_ setPotion(ItemStack,Potion)     — ALREADY RULED (5.12)
+  m_43566_ getAllEffects(CompoundTag)List  — PotionNBTHelper (ml tooltip lane)
+  m_43555_ addPotionTooltip(...)           — BambooSpikesTippedItem (tooltip lane)
+  Potions.* fields: f_43599_ WATER, f_43598_ EMPTY, f_43584_/85/86 POISON family
+  — all already desc-swapped to Holder by the 5.12 rules.
+
+Identity-compare shape at the wall (raw):
+  Potion potion = PotionUtils.getPotion(stack);
+  if (potion == Potions.WATER && !hasCustom) -> water fluid
+  else if (potion == Potions.EMPTY) -> not a potion fluid
+  else setPotion(stack, potion)
+
+=========================================================================
+2. 21.1 TRUTH (javap over server-1.21.1-srg.jar)
+=========================================================================
+- net.minecraft.world.item.alchemy.PotionUtils: CLASS NOT FOUND (gone).
+- PotionContents statics: createItemStack, getColor(Holder), getColor(Iterable),
+  getColorOptional, addPotionTooltip(Iterable,...) — NO getPotion IN ANY SHAPE.
+  Item-side potion access on 21.1 = DataComponents.POTION_CONTENTS component
+  (PotionContents record: potion()/customEffects()/getAllEffects()/getColor()).
+- Potions.* constants: Holder<Potion>.
+- Registry: get(ResourceLocation)T (null if absent), wrapAsHolder(T) (direct-holder
+  fallback for unregistered values), BuiltInRegistries.POTION present.
+
+=========================================================================
+3. DESIGN — the bare universe (and why)
+=========================================================================
+Raw code stores potions in RAW-typed slots (measured: BambooSpikesBlockTile
+`public Potion potion` field; tryApplyPotion(Potion); if_acmpne identity compares).
+A Holder-shaped bridge return would VerifyError at those slots — the bare universe
+is the only coherent one: bridges return/accept BARE registered Potion instances,
+site descs stay the RAW shapes (only the owner moves), and the EXISTING
+repairHolderUnwraps field pass already unwraps the Holder-kind constants to bare
+at exactly those consumers (measured in the 5.16-translated jars BEFORE this
+phase: getstatic WATER:Holder; value(); checkcast Potion; if_acmpne — the pass's
+ASTORE/ACMP/bare-consumer branches). Bare-vs-bare is the one identity universe.
+
+"no potion" = PotionCompat.EMPTY.value() — the bare sentinel INSIDE the existing
+synthetic Holder (same instance the EMPTY field sites compare against after
+unwrap) — so getPotion(...)==EMPTY stays TRUE for potion-less stacks (1.20.1
+semantics restored; a fresh synthetic Potion is never in the registry, never
+equal to a real potion).
+
+Verifier mystery CLOSED (5.12 boot-past explained): raw getDefaultInstance does
+`getstatic Potions.POISON; invokestatic makeSpikeItem(Potion)` — with the 5.12
+desc swap this LOOKS like a Holder-into-Potion-param verify error at class load,
+yet 5.12-5.16 booted. Reason: the field-unwrap pass inserts value()+checkcast
+before the bare-arg consumer (verified in the translated jar:
+`getstatic POISON:Holder; invokeinterface value; checkcast Potion;
+invokestatic makeSpikeItem:(Potion;)`). The pass covers field producers; METHOD
+producers (my bridges) don't need it — the bridge desc is already the raw shape.
+
+=========================================================================
+4. RULES + SHIM
+=========================================================================
+rules/memberretargets.txt (+5, potion lane): PotionUtils getPotion(ItemStack /
+CompoundTag), getColor(Potion / ItemStack), getMobEffects(ItemStack) ->
+@SHIM@/PotionContentsCompat, same desc, |static (site name kept — the 5.16
+shim-name rule is why the bridge methods are named getPotion/getColor/
+getMobEffects). Rule-format lesson re-learned: the value side is owner|desc|KIND
+— NO method name (a spurious 4th token = "bad memberretarget line").
+
+shims/src/.../PotionContentsCompat.java (+5 bridges, class javadoc rewritten):
+- getPotion(ItemStack): POTION_CONTENTS default EMPTY record ->
+  potion().map(Holder::value).orElse(PotionCompat.EMPTY.value())
+- getPotion(CompoundTag): tag.getString("Potion") -> tryParse ->
+  BuiltInRegistries.POTION.get(rl) -> null -> bare sentinel (1.20.1
+  Potion.byName semantics; empty/garbage both land on EMPTY)
+- getColor(Potion): sentinel -> -1, else PotionContents.getColor(wrapAsHolder)
+  (1.20.1: EMPTY -> -1, else mix effect colors)
+- getColor(ItemStack): record getColor() (custom-color override; -1 when empty)
+- getMobEffects(ItemStack): record getAllEffects() -> new ArrayList (1.20.1
+  returns a mutable List; consumers re-add to it)
+setPotion untouched (Object-normalizer already handles bare via wrapAsHolder's
+direct-holder fallback — a bare sentinel writes a PotionContents carrying the
+synthetic empty potion, which reads back identically through getPotion).
+
+Deferred (client lanes, census-named, need the legacy "CustomPotionEffects" /
+"Id"-int MobEffectInstance NBT decode — 1.20.1 MobEffectInstance.save keys:
+Id/Amplifier/Duration/Ambient/ShowParticles/ShowIcon/HiddenEffect, PASCAL case):
+- m_43566_ getAllEffects(CompoundTag) — sole caller ml PotionNBTHelper
+  .addPotionTooltip (item tooltips)
+- m_43555_ addPotionTooltip(ItemStack,List,float) — sole caller
+  BambooSpikesTippedItem.appendHoverText
+
+=========================================================================
+5. GATES (final agent)
+=========================================================================
+- shims: all 307 checks passed + 22 checks (runtime facade)
+- ctor-retarget: 3/0 (375 checks)
+- refmap-remapper: 3/0
+- srg-resolver: 4/0
+- matrix 16/16: 5.16 agent = matrix-run-517debt.txt (16/0); final 5.17 agent =
+  matrix-run-517final.txt (**16 passed, 0 failed**).
+
+Offline translate of both raw jars: clean; the wall site verified in the output
+jar — SoftFluidStack.fromItem:
+  invokestatic com/modbridge/shim/moonlight/PotionContentsCompat.getPotion:
+    (Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/alchemy/Potion;
+and supp BambooSpikesBlock/Behavior/BlockTile: getPotion x5 + getColor(Potion)
+all on the shim, EMPTY constants Holder-typed with the unwrap pass intact.
+
+=========================================================================
+6. BOOT (the decisive experiment)
+=========================================================================
+Staging note: the rewriter now NEUTRALIZES drifted mixins itself (dropped
+entries incl. ExplorationMap*, FriendlyByteBufMixin, MobBucketItemAccessor —
+the config entries leave, so the package guard releases those classes); the
+capability mixins (supp self.SelfOpenableContainerMixin, ml
+SelfItemDisplayTileMixin) are NOT auto-neutralized (they reference removed
+Forge capability API under surviving owner names) — excised by hand as in
+5.12 (class + config entry, python zipfile; scratch: /tmp/mb517/*-prep.jar),
+then dropped into testenv/server-121/mods/source-1201/ (new fingerprints ->
+fresh translate at boot).
+
+Boot 1 result:
+- "cannot be referenced directly": 0 (accessor bridges holding)
+- THE POTION WALL IS GONE: no PotionContents.getPotion NSME anywhere in the log
+- the ladder CROSSED the whole moonlight lane (Topping.fromFluidItem:200 ->
+  Topping.fromItem:232 -> DispenserBehaviorsManager.registerBehaviors:165 ->
+  DispenserHelper.reload:107 — three frames past the 5.16 stop) and died in
+  SUPPLEMENTARIES' slice of the same tags-updated event:
+
+  java.lang.NoSuchMethodError: 'boolean net.minecraft.world.item.Item.isEdible()'
+    at supp common/events/overrides/ThrowableSlimeballBehavior.appliesToItem(:35)
+    at supp common/events/overrides/InteractEventsHandler.registerOverrides(:107)
+    at supp reg/ModSetup.tagDependantSetup(:123)
+    at supp common/events/ServerEvents.onCommonTagUpdate(:175)
+    ... ServerEventsForge.onTagUpdate -> ReloadableServerResources.updateRegistryTags
+
+- then the known "Failed to load datapacks" fatal (same as 5.16's shape).
+
+5.18 HEAD (census done, next session's opening slice): the FOOD DRIFT family —
+1.20.1 Item.isEdible() (m_41472_) + Item.getFoodProperties() (m_41473_) are BOTH
+gone from 21.1 Item (javap: no edible/food/consumable member on Item; food is
+the FOOD/CONSUMABLE data components). Census: 5 classes (supp
+ThrowableSlimeballBehavior + LunchBoxItem; ml FoodProvider + FoodProvider$3 +
+BlockPlacerItem). Expected bridges over the same bare mechanism:
+isEdible(Item) -> components().has(DataComponents.CONSUMABLE),
+getFoodProperties(Item) -> components().get(DataComponents.FOOD) — 21.1 truth
+javap pending (Item.components() shape, CONSUMABLE-vs-FOOD semantics for
+"edible").
+
+Non-fatal, unchanged from 5.16: hourglass data parse errors, loot-inject
+"Unknown loot table" WARNs, ml FinishedRecipe NCDFE.

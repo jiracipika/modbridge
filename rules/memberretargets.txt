@@ -193,6 +193,24 @@ net/minecraft/core/DefaultedRegistry|()Ljava/util/Iterator;|iterator -> net/mine
 # getPotion sites, Holder from the retargeted Potions.* fields)
 net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/item/alchemy/Potion;)Lnet/minecraft/world/item/ItemStack;|setPotion -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;Ljava/lang/Object;)Lnet/minecraft/world/item/ItemStack;|static
 
+# --- potion lane (phase 5.17, measured boot wall: moonlight SoftFluidStack.fromItem
+# NSME on PotionContents.getPotion(ItemStack)): the whole 1.20.1 PotionUtils static
+# family is GONE on 21.1 (javap: no such class; the 5.9 typerename parked its sites
+# on PotionContents, a record with a different surface - no getPotion in any shape,
+# getColor only in Holder/Iterable forms, item access via POTION_CONTENTS).
+# Bare-universe bridges: site descs stay the RAW shapes (desc = site desc, name =
+# site name, only the owner moves to the shim) so translated locals/fields/identity
+# compares keep their original Potion types; the repairHolderUnwraps pass already
+# unwraps the Holder-kind constants to bare at those consumers. Deferred (client
+# lanes, census-named, need the legacy "CustomPotionEffects"/"Id"-int NBT decode):
+# getAllEffects(CompoundTag) [ml PotionNBTHelper.addPotionTooltip], and the 1.20.1
+# addPotionTooltip(ItemStack,List,float) tooltip family itself.
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/alchemy/Potion;|getPotion -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/alchemy/Potion;|static
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/world/item/alchemy/Potion;|getPotion -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/nbt/CompoundTag;)Lnet/minecraft/world/item/alchemy/Potion;|static
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/alchemy/Potion;)I|getColor -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/alchemy/Potion;)I|static
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;)I|getColor -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;)I|static
+net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;)Ljava/util/List;|getMobEffects -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;)Ljava/util/List;|static
+
 # --- setup lane (phase 5.12): ExtraCodecs.stringResolverCodec moved to DFU 8's
 # Codec.stringResolver (identical shape). The static-kind retarget lands INVOKESTATIC
 # itf=false; repairInterfaceCallSites (runs last, owner is an inventoried interface)

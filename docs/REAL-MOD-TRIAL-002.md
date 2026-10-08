@@ -1525,3 +1525,83 @@ the potion wall above is the next ladder head.
 Gates: as above (matrix not run this phase). Counters: supp translate shows
 "accessor checkcasts dropped=2" (the pass visits the site class twice; the
 site census is 1 — counter reported as-is).
+
+## Phase 5.17 — the potion member-drift wall falls (bare-universe PotionUtils bridges)
+
+Oct 8 2026. First action: the 5.16 matrix debt retired — run-matrix.sh with the
+5.16 agent, **16/16** (matrix-run-517debt.txt).
+
+Census (constant-pool scan + javap, raw jars): 8 PotionUtils members across 14
+classes (ml 3, supp 11), every SRG id resolved through srgmembers.txt. The wall
+site's raw shape is the whole design problem in three lines:
+`Potion potion = PotionUtils.getPotion(stack); ... if (potion == Potions.WATER)`
+`... else if (potion == Potions.EMPTY)` — the potion flows into identity compares,
+a raw-typed tile field (`public Potion potion`, BambooSpikesBlockTile) and
+setPotion. A Holder-shaped bridge return would VerifyError at those slots.
+
+21.1 truth (javap server-1.21.1-srg.jar): PotionUtils is not a class; the 5.9
+typerename parked its sites on PotionContents, a RECORD with a different surface
+— no getPotion in ANY shape (item potion access = the POTION_CONTENTS component),
+getColor only in Holder/Iterable forms, Potions.* constants are Holder<Potion>.
+
+Design — the bare universe: bridges return/accept BARE registered Potion
+instances; site descs stay the raw shapes (only the owner moves to the per-mod
+shim). Identity coherence: "no potion" = PotionCompat.EMPTY.value() (the bare
+sentinel inside the existing synthetic Holder — the exact instance the EMPTY
+field sites compare against, because the EXISTING repairHolderUnwraps field pass
+already unwraps Holder-kind constants to bare at ASTOREs, if_acmp compares and
+bare-arg consumers — measured in the 5.16-translated jars before this phase).
+Bare-vs-bare is the one universe where `getPotion(stack) == Potions.EMPTY` keeps
+its 1.20.1 meaning. Verifier mystery closed in passing: `getstatic POISON;
+invokestatic makeSpikeItem(Potion)` looked like a Holder-into-Potion verify error
+that somehow booted since 5.12 — it doesn't because the field pass inserts
+`value(); checkcast Potion;` before the bare-arg consumer (verified in the
+translated jar). Method producers need nothing: the bridge desc IS the raw shape.
+
+Rules (+5, memberretargets.txt, keyed on raw owner PotionUtils / mojmap names /
+raw descs — the value side is owner|desc|static, NO method name: the |static
+retarget keeps the site's name, which is why the bridges are named
+getPotion/getColor/getMobEffects; a spurious name token = "bad memberretarget
+line"): getPotion(ItemStack), getPotion(CompoundTag) (tag "Potion" -> registry
+lookup -> sentinel; 1.20.1 Potion.byName semantics), getColor(Potion) (sentinel
+-> -1, else PotionContents.getColor(wrapAsHolder)), getColor(ItemStack) (record
+color, -1 when empty), getMobEffects(ItemStack) (record effects, mutable List).
+setPotion untouched — its Object-normalizer + wrapAsHolder's direct-holder
+fallback already accept the bare sentinel.
+
+Deferred with census evidence (client lanes; need the legacy "CustomPotionEffects"
+/ "Id"-int MobEffectInstance NBT decode — 1.20.1 save keys are PASCAL case):
+getAllEffects(CompoundTag) (sole caller: ml PotionNBTHelper.addPotionTooltip) and
+the addPotionTooltip(ItemStack,List,float) family (sole caller:
+BambooSpikesTippedItem.appendHoverText).
+
+Gates (final agent): shims 307+22, ctor-retarget 3/0 (375 checks), refmap 3/0,
+srg 4/0, **matrix 16/16** (matrix-run-517final.txt). Offline translate clean;
+the translated SoftFluidStack.fromItem calls
+`invokestatic com/modbridge/shim/moonlight/PotionContentsCompat.getPotion` —
+the NSME is structurally impossible at the site.
+
+Boot 1: "cannot be referenced directly" 0; the potion wall GONE; the ladder
+crossed the whole moonlight lane (Topping.fromFluidItem -> registerBehaviors ->
+DispenserHelper.reload, three frames past the 5.16 stop) and died in supp's
+slice of the same tags-updated event at the NEW head:
+`NoSuchMethodError: 'boolean net.minecraft.world.item.Item.isEdible()'`
+(ThrowableSlimeballBehavior.appliesToItem:35 <- InteractEventsHandler
+.registerOverrides <- ModSetup.tagDependantSetup <- ServerEvents.onCommonTagUpdate)
+then the known "Failed to load datapacks" fatal.
+
+Staging note (b-data): the rewriter now NEUTRALIZES drifted mixins itself
+(dropped entries incl. MobBucketItemAccessor — the config entry leaves, the
+package guard releases the class); the two capability mixins are NOT
+auto-neutralized (removed-Forge-API refs under surviving owner names) and were
+excised by hand as in 5.12 (class + config entry) before staging into
+source-1201.
+
+5.18 head (census done): the FOOD DRIFT family — Item.isEdible() (m_41472_) and
+Item.getFoodProperties() (m_41473_) are BOTH gone from 21.1 Item (food is the
+FOOD/CONSUMABLE data components). 5 classes: supp ThrowableSlimeballBehavior +
+LunchBoxItem, ml FoodProvider + FoodProvider$3 + BlockPlacerItem. Same bare
+mechanism, one bridge each; 21.1 truth javap pending (Item.components() shape;
+CONSUMABLE-vs-FOOD for "edible" semantics).
+
+Evidence: testenv/evidence/phase517-potion-drift.txt.
