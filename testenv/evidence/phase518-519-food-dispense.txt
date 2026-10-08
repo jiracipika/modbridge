@@ -1,0 +1,135 @@
+phase 5.18 + 5.19 — the food wall and the dispense-source wall fall (ItemFoodCompat
+duck-typed bridges; BlockSourceCompat record factory; THE FRAME-REPAIR REWRITER FIX);
+new head = the data-driven-enchantment family (5.20, whale)
+
+HEAD at phase start: 8343d75 (5.17). Both phases in one session; boot-proven
+together (the ladder crossed both lanes in one boot each).
+
+=========================================================================
+PHASE 5.18 — the food drift family (measured wall: supp
+ThrowableSlimeballBehavior.appliesToItem:35 NSME Item.isEdible)
+=========================================================================
+Census (constant-pool scan, both raw jars): 5 classes.
+  Item.isEdible() m_41472_      — ThrowableSlimeballBehavior.appliesToItem:35
+                                  (THE WALL), ml FoodProvider:66
+  Item.getFoodProperties() m_41473_ — ml FoodProvider$3:25
+  BlockPlacerItem DEFINES overrides of both (mimicFood semantics — a plain
+  static bridge would silently bypass ml's own food mimicry)
+  LunchBoxItem calls its MOD SUPERCLASS's getFoodProperties (mod-internal,
+  resolves naturally — no rule)
+
+21.1 truth (javap server-1.21.1-srg.jar): NO isEdible/food member on Item
+(candidates m_41472_/m_41473_ absent); food = DataComponents.FOOD (FOOD only —
+the FOOD/CONSUMABLE split is 1.21.2+, NOT on this build); FoodProperties record
+exists; Item.components() -> DataComponentMap. Item.getDefaultInstance()
+(m_7968_, same flow) SURVIVES unchanged.
+
+Bridge (shims/src/.../ItemFoodCompat.java, NEW carrier; rules +2, receiver-
+as-first-param |static — DyeColorCompat idiom):
+  net/minecraft/world/item/Item|()Z|isEdible -> @SHIM@/ItemFoodCompat|(Lnet/minecraft/world/item/Item;)Z|static
+  net/minecraft/world/item/Item|()Lnet/minecraft/world/food/FoodProperties;|getFoodProperties -> @SHIM@/ItemFoodCompat|(...)Lnet/minecraft/world/food/FoodProperties;|static
+DISPATCH-PRESERVING: the shim duck-types the receiver's class for a RENAMED
+mod override first (cached public getMethod probe — ObfRefl idiom; the SRG
+rename lands isEdible/getFoodProperties on the mod classes, and 21.1 Item has
+neither member so a probe hit is always a mod override), then falls back to
+components().has/get(DataComponents.FOOD). BlockPlacerItem.mimicFood keeps
+working through Item-typed receivers; vanilla items take the component path.
+
+Gates after 5.18: shims 307+22, ctor 377 (375 + 2 ItemFoodCompat relocation
+auto-checks), shims.txt manifest 74, refmap 3/0, srg 4/0. Translated site
+verified: appliesToItem calls invokestatic ItemFoodCompat.isEdible:(Item;)Z.
+
+=========================================================================
+PHASE 5.19 — the dispense-source family (measured wall: supp
+FireBehaviorsManager.registerBehaviors:27 NCDFE net/minecraft/core/BlockSourceImpl
+— verification-time: the manager frame holds while EnderPearlBehavior verifies)
+=========================================================================
+21.1 truth (javap): net.minecraft.core.BlockSource moved to
+net.minecraft.core.dispenser AND became a final RECORD — 4-arg ctor
+(ServerLevel, BlockPos, BlockState, DispenserBlockEntity), accessors
+level()/pos()/state()/center() (+x/y/z). The 5.9 typerename
+core.BlockSource -> core.dispenser.BlockSource exists since the early phases;
+BlockSourceImpl (the 1.20.1 lazy impl) has NO counterpart.
+
+Census (supp): `new BlockSourceImpl(level, BlockPos.containing(vec3))` in
+EnderPearlBehavior.fireInner only (the instance flows to PearlMarker
+.createPearlToDispenseAndPlaceMarker which calls getLevel + getPos on it).
+getLevel/getPos/getBlockState called on the source by 12/5/4 supp classes
+(all dispense/fire behaviors — vanilla hands them the real record; their calls
+NSME without renames). LATENT ICCE named (5.20+): MovingBlockSource
+IMPLEMENTS core.BlockSource (the record is final — cannot be implemented);
+lazy-loaded (minecart dispense), not ladder-blocking.
+
+Fix (3 pieces):
+1. ctorretargets.txt (+1): net/minecraft/core/BlockSourceImpl|(ServerLevel;BlockPos;)V
+   -> @SHIM@/BlockSourceCompat|INSTANCE|of|(same args)Lnet/minecraft/core/dispenser/BlockSource;
+2. shims/src/.../BlockSourceCompat.java (NEW carrier): of() resolves state +
+   block entity EAGERLY (BlockSourceImpl resolved lazily; the lane uses the
+   source transiently) and returns the real record. 4th slot is
+   DispenserBlockEntity-typed: non-dispenser target passes null (1.20.1 cast
+   lazily; null beats a construction-time CCE on a transient source; the lane
+   never reads blockEntity()).
+3. memberrenames.txt (+3): core.BlockSource getLevel->level, getPos->pos,
+   getBlockState->state (raw-space keys, applyMemberRenames runs pre-remapClass).
+
+Gates after 5.19: shims 307+22, ctor 379 (377 + 2 BlockSourceCompat relocation
+checks), manifest 75, refmap 3/0, srg 4/0.
+
+=========================================================================
+THE FRAME-REPAIR REWRITER FIX (the real find of this session)
+=========================================================================
+Boot 4 (both lanes landed, installed jar verified bridged) STILL died with
+NCDFE BlockSourceImpl — the site was clean but javap -v showed the survivors:
+the StackMapTable `append` frame in fireInner still typed local 8 as
+`class net/minecraft/core/BlockSourceImpl`. The rewriter reads frames verbatim
+(no COMPUTE_FRAMES), so every type-changing rewrite must mirror into the frames
+or the verifier resolves the dead class at verify time (frame types load even
+for never-executed paths).
+
+Fix in Rewriter.java (mechanism, not spot patch) — repairOwnerTypeFrames:
+- ctorretarget pass: after rewriting sites, whole-method sweep replacing
+  frame local/stack entries naming the KEY OWNER with the rule's RETURN type
+  (BlockSourceImpl -> core/dispenser/BlockSource).
+- |static memberretarget pass: same sweep for key owners ABSENT from the 21.1
+  classlist (accessor interfaces, PotionUtils, BlockSourceImpl), replacement =
+  the shim's FIRST PARAM type (the receiver's own class). Present-on-21.1
+  owners (Item) keep their frames. This also defuses the latent same-shaped
+  hazard for the 5.16 accessor-family remainder sites (any accessor-typed
+  frame local would have tripped the mixin guard exactly like this).
+- counter: "phase-5.19: removed-owner frame locals repaired=N" in the
+  translate summary (supp: 5; the frame + 4 others).
+
+All gates re-run green with the frame-repair rewriter (379 / 307+22 / 3 / 4).
+Offline verify: javap -v — BlockSourceImpl 0 mentions in EnderPearlBehavior;
+frame local = `class net/minecraft/core/dispenser/BlockSource`.
+
+=========================================================================
+BOOT LADDER (server-121, cache purged between — stale-cache gotcha below)
+=========================================================================
+Boot 4 (pre-frame-fix): still NCDFE BlockSourceImpl -> THE FRAME FIND.
+Boot 5 (frame-fix agent): BlockSourceImpl GONE; the ladder crossed the
+dispense-source lane and the whole tags-updated wave reached the NEW head:
+
+  NoSuchFieldError: BuiltInRegistries.ENCHANTMENT (expected net.minecraft.core.Registry)
+    at supp common/items/loot/CurseLootFunction.rebuild(:30)
+    at supp common/events/ServerEvents.onCommonTagUpdate(:187)
+    ... same ReloadableServerResources.updateRegistryTags wave
+
+5.20 HEAD = the DATA-DRIVEN-ENCHANTMENT family (a whale, next session's
+opening slice): 1.21 removed enchantments from the static registry entirely —
+javap BuiltInRegistries: NO plain ENCHANTMENT field survives; only
+ENCHANTMENT_{EFFECT_COMPONENT,LEVEL_BASED_VALUE,ENTITY_EFFECT,LOCATION_BASED_
+EFFECT,VALUE_EFFECT,PROVIDER}_TYPE codec registries. Enchantments are
+datapack-driven (RegistrySetBuilder + dynamic registry). CurseLootFunction
+burn-curse enumeration needs a real replacement strategy (vanilla 1.21
+Enchantment helper APIs / datagen-driven), NOT a one-line bridge. The known
+non-fatal ml FinishedRecipe NCDFE appears in the same log (unchanged).
+
+STALE-CACHE GOTCHA (b-data): boot 3 reused a warm-cache translate (same
+source-jar fingerprints) and reported the PREVIOUS phase's wall — the cache
+key includes an agent/rules fingerprint but the boot-time reuse after a
+rebuild-with-same-fingerprint-source can mask a new agent's output; purging
+testenv/server-121/modbridge-cache/1.21.1 between boots is now the drill.
+
+Matrix with the final frame-repair agent: matrix-run-519final.txt
+(**16 passed, 0 failed**).

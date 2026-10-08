@@ -1605,3 +1605,63 @@ mechanism, one bridge each; 21.1 truth javap pending (Item.components() shape;
 CONSUMABLE-vs-FOOD for "edible" semantics).
 
 Evidence: testenv/evidence/phase517-potion-drift.txt.
+
+## Phase 5.18 + 5.19 — the food wall and the dispense-source wall fall (and the frame-repair rewriter fix)
+
+Oct 8 2026, one session over HEAD 8343d75 (5.17). Two families crossed; the
+session's real find is a REWRITER mechanism fix.
+
+**5.18 food drift** (wall: ThrowableSlimeballBehavior.appliesToItem:35 NSME
+Item.isEdible): Item.isEdible()/getFoodProperties() are gone on 21.1 (food =
+the DataComponents.FOOD component; FOOD only — the FOOD/CONSUMABLE split is
+1.21.2+). New ItemFoodCompat carrier, 2 receiver-as-first-param |static rules,
+DISPATCH-PRESERVING: the shim duck-types the receiver's class for a RENAMED
+mod override first (cached public getMethod probe — 21.1 Item has neither
+member, so a hit is always a mod override; measured: ml BlockPlacerItem
+mimics food through exactly these) before falling back to the component map.
+A plain static bridge would have silently bypassed mod food mimicry.
+
+**5.19 dispense-source** (wall: FireBehaviorsManager.registerBehaviors:27 NCDFE
+BlockSourceImpl, verification-time via EnderPearlBehavior): 21.1 turned
+core.BlockSource into the final core.dispenser.BlockSource RECORD (4-arg ctor
+level/pos/state/blockEntity; accessors level/pos/state). Three pieces: a
+ctorretarget to a BlockSourceCompat factory (resolves state + block entity
+eagerly — the lane uses the source transiently; null block entity when the
+target isn't a dispenser, where 1.20.1 cast lazily), + 3 memberrenames
+(getLevel->level, getPos->pos, getBlockState->state — 12/5/4 supp classes call
+them on the source from vanilla-dispatched behaviors), + the frame fix below.
+LATENT named: MovingBlockSource IMPLEMENTS core.BlockSource — a final record
+cannot be implemented (lazy-loaded minecart lane, 5.20+ design work).
+
+**THE FRAME-REPAIR REWRITER FIX**: boot 4 died NCDFE BlockSourceImpl with the
+site verifiably bridged — javap -v showed the StackMapTable `append` frame in
+fireInner still typing local 8 as `class net/minecraft/core/BlockSourceImpl`.
+The rewriter reads frames verbatim (no COMPUTE_FRAMES): every type-changing
+rewrite must mirror into the frames, or the verifier resolves the dead class
+at verify time (frame types load even on never-executed paths). New
+repairOwnerTypeFrames mechanism: ctorretarget sites sweep their method's
+frames (owner -> rule return type); |static memberretargets sweep for key
+owners ABSENT from the 21.1 classlist (owner -> shim first-param type — the
+receiver's own class; present owners like Item keep frames). Counter:
+"phase-5.19: removed-owner frame locals repaired=N" (supp: 5). This also
+defuses the latent same-shaped hazard for the 5.16 accessor-family remainder
+(accessor-typed frame locals would trip the mixin guard identically).
+
+Boots: boot 4 = the frame find; boot 5 = BlockSourceImpl gone, the whole
+tags-updated wave crossed, new head:
+`NoSuchFieldError: BuiltInRegistries.ENCHANTMENT` (CurseLootFunction.rebuild:30
+<- ServerEvents.onCommonTagUpdate:187 — same reload wave).
+
+**5.20 head = the data-driven-enchantment family (a whale)**: 1.21 removed
+enchantments from the static registry entirely (javap BuiltInRegistries: no
+plain ENCHANTMENT field; only the six ENCHANTMENT_*_TYPE codec registries
+remain; enchantments are datapack-driven). CurseLootFunction's burn-curse
+enumeration needs a real replacement strategy, not a one-line bridge.
+
+Gates (final agent): ctor 379 (+2 BlockSourceCompat relocation), shims
+307+22 (manifest 75), refmap 3/0, srg 4/0, **matrix 16/16**
+(matrix-run-519final.txt). Stale-cache gotcha (b-data): boot 3 reused a warm
+cache and replayed the previous wall — purge modbridge-cache/1.21.1 between
+agent rebuilds.
+
+Evidence: testenv/evidence/phase518-519-food-dispense.txt.

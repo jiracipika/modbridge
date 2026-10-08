@@ -59,3 +59,12 @@ net/minecraft/util/ExtraCodecs|(Ljava/util/function/Function;Ljava/util/function
 # accessors renamed (the Info-build path reads description + packFormat).
 net/minecraft/server/packs/metadata/pack/PackMetadataSection|()Lnet/minecraft/network/chat/Component;|getDescription=description
 net/minecraft/server/packs/metadata/pack/PackMetadataSection|()I|getPackFormat=packFormat
+# --- dispense-source lane (phase 5.19): the 1.20.1 core.BlockSource interface
+# became the final core.dispenser.BlockSource RECORD on 21.1 (typerename exists
+# since 5.9); the record's accessors are level/pos/state, so every translated
+# call site on the source (all dispense/fire behaviors receive it from vanilla
+# AND mod-internal paths) NSMEs without these renames. Census: getLevel x12
+# classes, getPos x5, getBlockState x4 (supp fire+dispenser behaviors, PearlMarker).
+net/minecraft/core/BlockSource|()Lnet/minecraft/server/level/ServerLevel;|getLevel=level
+net/minecraft/core/BlockSource|()Lnet/minecraft/core/BlockPos;|getPos=pos
+net/minecraft/core/BlockSource|()Lnet/minecraft/world/level/block/state/BlockState;|getBlockState=state

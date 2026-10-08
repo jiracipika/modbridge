@@ -3,6 +3,7 @@ com/modbridge/shim/ArmorItemCompat
 com/modbridge/shim/ArmorMaterialCompat
 com/modbridge/shim/AttributeModifierCompat
 com/modbridge/shim/BlockReachCompat
+com/modbridge/shim/BlockSourceCompat
 com/modbridge/shim/BucketItemCompat
 com/modbridge/shim/CauldronCompat
 com/modbridge/shim/CriteriaTriggersCompat
@@ -22,6 +23,7 @@ com/modbridge/shim/FmlCompat
 com/modbridge/shim/GravelBlock
 com/modbridge/shim/IIngredientSerializer
 com/modbridge/shim/ItemCompat
+com/modbridge/shim/ItemFoodCompat
 com/modbridge/shim/ItemStackTagCompat
 com/modbridge/shim/LivingTickEvent
 com/modbridge/shim/LootCompat

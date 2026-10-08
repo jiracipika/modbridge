@@ -211,6 +211,19 @@ net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/alchemy/
 net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;)I|getColor -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;)I|static
 net/minecraft/world/item/alchemy/PotionUtils|(Lnet/minecraft/world/item/ItemStack;)Ljava/util/List;|getMobEffects -> @SHIM@/PotionContentsCompat|(Lnet/minecraft/world/item/ItemStack;)Ljava/util/List;|static
 
+# --- food lane (phase 5.18, measured boot wall: supp ThrowableSlimeballBehavior
+# .appliesToItem NSME in the same tags-updated event, supp-side slice after the
+# 5.17 potion wall fell): 1.20.1 Item.isEdible() + Item.getFoodProperties() are
+# GONE on 21.1 (food = the DataComponents.FOOD component; 1.21.1 has FOOD only -
+# the FOOD/CONSUMABLE split is 1.21.2+). Receiver-as-first-param |static bridges
+# (DyeColorCompat idiom). Dispatch-preserving: translated mod classes still
+# DEFINE overrides (the SRG rename lands the 1.20.1 names on the mod class - ml
+# BlockPlacerItem mimics food through exactly these), so the shim duck-types the
+# receiver's class for a renamed override before falling back to the component
+# map (cached public getMethod probe, ObfRefl idiom).
+net/minecraft/world/item/Item|()Z|isEdible -> @SHIM@/ItemFoodCompat|(Lnet/minecraft/world/item/Item;)Z|static
+net/minecraft/world/item/Item|()Lnet/minecraft/world/food/FoodProperties;|getFoodProperties -> @SHIM@/ItemFoodCompat|(Lnet/minecraft/world/item/Item;)Lnet/minecraft/world/food/FoodProperties;|static
+
 # --- setup lane (phase 5.12): ExtraCodecs.stringResolverCodec moved to DFU 8's
 # Codec.stringResolver (identical shape). The static-kind retarget lands INVOKESTATIC
 # itf=false; repairInterfaceCallSites (runs last, owner is an inventoried interface)

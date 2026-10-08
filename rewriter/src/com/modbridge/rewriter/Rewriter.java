@@ -243,6 +243,7 @@ public class Rewriter {
     int indySamsApplied;
     int memberRenamesApplied;
     int accessorCheckcastsDropped;
+    int removedOwnerFramesRepaired;
     int classesTransformed;
 
     public static void main(String[] args) throws Exception {
@@ -965,8 +966,10 @@ public class Rewriter {
                 overrideReturnsApplied, indySamsApplied, fieldUnwrapsApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
-        if (accessorCheckcastsDropped > 0) {
-            System.out.println("mixin phase-5.16: accessor checkcasts dropped=" + accessorCheckcastsDropped);
+        if (accessorCheckcastsDropped > 0) {            System.out.println("mixin phase-5.16: accessor checkcasts dropped=" + accessorCheckcastsDropped);
+        }
+        if (removedOwnerFramesRepaired > 0) {
+            System.out.println("phase-5.19: removed-owner frame locals repaired=" + removedOwnerFramesRepaired);
         }
         for (String line : neutralizationLog) {
             System.out.println("neutralized mixin: " + line);
@@ -1743,7 +1746,15 @@ public class Rewriter {
      */
     void rewriteCtorRetargets(ClassNode cn) {
         if (ctorRetargets.isEmpty()) return;
+        // removed-owner frame repair (phase 5.19): the produced instance's type
+        // changed (rule[3]'s return) but StackMapTable frames still type the
+        // local holding it as the REMOVED key owner (measured: BlockSourceImpl
+        // NCDFE at verify, EnderPearlBehavior.fireInner). Whole-method sweep
+        // after the rewrite loop: every construction of the owner in the method
+        // is rewritten by the same rule, so no stale-typed local can survive.
+        Map<String, String> producedTypes = new HashMap<>();
         for (MethodNode mn : cn.methods) {
+            producedTypes.clear();
             AbstractInsnNode n = mn.instructions.getFirst();
             while (n != null) {
                 AbstractInsnNode dup = n.getNext();
@@ -1797,7 +1808,15 @@ public class Rewriter {
                 mn.instructions.remove(dup);
                 mn.instructions.remove(ctor);
                 ctorRetargetsApplied++;
+                String ret = rule[3];
+                String retDesc = ret.substring(ret.lastIndexOf(')') + 1);
+                // FrameNode slots carry the internal name (no L...; delimiters)
+                producedTypes.put(t.desc, retDesc.startsWith("L") && retDesc.endsWith(";")
+                        ? retDesc.substring(1, retDesc.length() - 1) : retDesc);
                 n = after;
+            }
+            if (!producedTypes.isEmpty()) {
+                repairOwnerTypeFrames(mn, producedTypes);
             }
         }
     }
@@ -2862,6 +2881,17 @@ public class Rewriter {
             String renamed = memberRenames.get(cn.name + "|" + mn.desc + "|" + mn.name);
             if (renamed != null) mn.name = renamed;
         }
+        // removed-owner frame repair (phase 5.19): an |static retarget whose KEY
+        // owner is a class ABSENT from 21.1 (gone interface/impl - accessor
+        // interfaces under the mixin guard, PotionUtils, BlockSourceImpl) leaves
+        // the receiver's LOCAL VARIABLE typed as that class in StackMapTable
+        // frames. The verifier resolves frame types even for never-re-executed
+        // paths -> NCDFE/IllegalClassLoadError at class verify, instruction
+        // rewrite notwithstanding (measured: BlockSourceImpl frame local in
+        // EnderPearlBehavior.fireInner). Replacement = the shim's FIRST PARAM
+        // type (the receiver's own class, which is what the local actually
+        // holds). Present-on-21.1 owners (Item for isEdible) keep their frames.
+        Map<String, String> removedOwnerTypes = new HashMap<>();
         for (MethodNode mn : cn.methods) {
             for (AbstractInsnNode n : mn.instructions) {
                 if (n instanceof MethodInsnNode m) {
@@ -2894,6 +2924,10 @@ public class Rewriter {
                                 mn.instructions.remove(cast);
                                 accessorCheckcastsDropped++;
                             }
+                            if (!classKnown(retargetKeyOwner)) {
+                                removedOwnerTypes.put(retargetKeyOwner,
+                                        firstParamInternal(retarget[1]));
+                            }
                         } else {
                             boolean itf = "interface".equals(retarget[2]);
                             m.setOpcode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL);
@@ -2924,6 +2958,71 @@ public class Rewriter {
                 }
             }
         }
+        if (!removedOwnerTypes.isEmpty()) {
+            for (MethodNode mn : cn.methods) {
+                repairOwnerTypeFrames(mn, removedOwnerTypes);
+            }
+        }
+    }
+
+    /**
+     * Rewrites StackMapTable frame LOCALS and STACK entries that still name a
+     * class removed from 21.1 (the map: removed owner -> the type the rewritten
+     * site actually produces). Frames are read verbatim (no COMPUTE_FRAMES), so
+     * an instruction rewrite that changes the produced type must be mirrored
+     * here or the verifier resolves the dead class at verify time. FrameNode
+     * count fields are private (ASM 9.x) — rebuilt in place, the proven
+     * fixArgRegionFrames idiom.
+     */
+    private void repairOwnerTypeFrames(MethodNode mn, Map<String, String> types) {
+        for (AbstractInsnNode n : mn.instructions) {
+            if (!(n instanceof FrameNode fr)) continue;
+            boolean changed = false;
+            List<Object> local = fr.local == null ? null : new ArrayList<>(fr.local);
+            List<Object> stack = fr.stack == null ? null : new ArrayList<>(fr.stack);
+            if (local != null) {
+                for (int k = 0; k < local.size(); k++) {
+                    if (types.containsKey(local.get(k))) {
+                        local.set(k, types.get(local.get(k)));
+                        changed = true;
+                    }
+                }
+            }
+            if (stack != null) {
+                for (int k = 0; k < stack.size(); k++) {
+                    if (types.containsKey(stack.get(k))) {
+                        stack.set(k, types.get(stack.get(k)));
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                removedOwnerFramesRepaired++;
+                FrameNode fixed = new FrameNode(fr.type,
+                        local == null ? 0 : local.size(),
+                        local == null ? null : local.toArray(),
+                        stack == null ? 0 : stack.size(),
+                        stack == null ? null : stack.toArray());
+                mn.instructions.insert(n, fixed);
+                mn.instructions.remove(n);
+            }
+        }
+    }
+
+    /** first parameter type of a method descriptor, in FrameNode slot form
+     *  (internal name, no L...; delimiters; arrays keep the descriptor shape). */
+    private static String firstParamInternal(String desc) {
+        int i = 1; // skip '('
+        char c = desc.charAt(i);
+        if (c == '[') { // array slot: FrameNode keeps the descriptor form
+            return desc.substring(i, desc.indexOf(';', i) + 1);
+        }
+        if (c == 'L') {
+            return desc.substring(i + 1, desc.indexOf(';', i));
+        }
+        // primitive param: no object type exists for the slot — caller maps only
+        // object receivers in practice; fall back to java/lang/Object
+        return "java/lang/Object";
     }
 
     /**

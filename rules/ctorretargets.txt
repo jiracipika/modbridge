@@ -55,3 +55,12 @@ net/minecraft/world/entity/ai/attributes/AttributeModifier|(Ljava/util/UUID;Ljav
 # (the 9-arg Pack.create overload rides memberretargets.txt; same lane).
 net/minecraft/server/packs/repository/Pack$Info|(Lnet/minecraft/network/chat/Component;ILnet/minecraft/world/flag/FeatureFlagSet;)V -> @SHIM@/PackCompat|INSTANCE|info|(Lnet/minecraft/network/chat/Component;ILnet/minecraft/world/flag/FeatureFlagSet;)Lnet/minecraft/server/packs/repository/Pack$Metadata;
 net/minecraft/server/packs/metadata/pack/PackMetadataSection|(Lnet/minecraft/network/chat/Component;I)V -> @SHIM@/PackCompat|INSTANCE|metadataSection|(Lnet/minecraft/network/chat/Component;I)Lnet/minecraft/server/packs/metadata/pack/PackMetadataSection;
+# --- dispense-source lane (phase 5.19): 1.20.1 BlockSourceImpl(ServerLevel,
+# BlockPos) is gone on 21.1 - core.BlockSource moved to core.dispenser and became
+# a final RECORD (4-arg ctor: level,pos,state,blockEntity). The factory resolves
+# state + block entity eagerly (BlockSourceImpl resolved them lazily per call;
+# the pearl/fire lanes use the source transiently, so eager == lazy there).
+# Measured boot wall: FireBehaviorsManager.registerBehaviors -> EnderPearlBehavior
+# .fireInner `new BlockSourceImpl` NCDFE at verify time (the manager frame holds
+# while the behavior class verifies).
+net/minecraft/core/BlockSourceImpl|(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/core/BlockPos;)V -> @SHIM@/BlockSourceCompat|INSTANCE|of|(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/core/dispenser/BlockSource;
