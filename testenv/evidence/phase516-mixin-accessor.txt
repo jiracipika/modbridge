@@ -1,0 +1,185 @@
+phase 5.16 — the mixin-accessor direct-load wall falls (honest partial: the supp
+MobBucketItemAccessor lane; the remaining 8 accessor sites named for 5.17)
+
+HEAD at phase start: 6c873b9 (5.15). All work below measured against the real
+1.20.1 jars in testenv/server-121/mods/source-1201/ and the live 21.1 runtime.
+
+=========================================================================
+1. THE GUARD, DECODED (javadoc + javap over the live mixin jar)
+=========================================================================
+Mixin: testenv/server-121/libraries/net/fabricmc/sponge-mixin/0.15.2+mixin.0.8.7/
+sponge-mixin-0.15.2+mixin.0.8.7.jar (the 21.1 runtime mixin).
+
+org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinEnvironment,
+String, ClassNode) keeps a PACKAGE GUARD with this exact shape (bytecode-read):
+
+  config = the REGISTERED config whose mixinPackage is the longest prefix of
+           the class name (MixinConfig.packageMatch)
+  if (config != null) {
+      info = ClassInfo.fromClassNode(classNode);
+      if (info.hasSuperClass(InjectionPoint.class)
+              || info.hasSuperClass(ITargetSelectorDynamic.class)) return; // only pass
+      throw new IllegalClassLoadError(getInvalidClassError(name, classNode, config));
+  }
+
+getInvalidClassError has three message variants; which one fires is diagnostic:
+  #1 class IS in config.getClasses(): "Illegal classload request for %s. Mixin is
+     defined in %s and cannot be referenced directly"
+  #2 class is NOT in the list but resolves as a CLASS-retention @Mixin ACCESSOR
+     variant: "... the mixin has not been applied"
+  #3 neither: "%s is in a defined mixin package %s* owned by %s and cannot be
+     referenced directly"   <-- THE 5.15 WALL (live log, 4 occurrences)
+
+CONSEQUENCES (two 5.15 hypotheses die here):
+- "an accessor whose APPLY succeeded releases its class for direct loads" is FALSE:
+  there is NO already-applied passthrough anywhere in applyMixins — a DIRECT load of
+  any class inside a registered mixin package is fatal, applied or not. "Make the
+  accessors apply" (the 5.15 systematic candidate) cannot release direct loads.
+- The 5.14 empirical asymmetry (ml's DispenserBlockAccessor "loaded fine, NSME") is
+  LUCK OF LAZY RESOLUTION, not a release: loading ml's DispenserHelper$
+  AdditionalDispenserBehavior does not RESOLVE its accessor constant-pool refs; only
+  executing the checkcast/invokeinterface does. Every one of the 9 direct references
+  (below) points INTO a registered mixin package and is a latent guard trip.
+
+=========================================================================
+2. THE 9-SITE TABLE (census over the raw 1.20.1 jars; grep + javap)
+=========================================================================
+supp (supplementaries-1.20-3.1.38.jar) — config packages:
+  supplementaries.mixins.json        package net...supplementaries.mixins.forge
+  supplementaries-common.mixins.json package net...supplementaries.mixins
+  #1 STOP SITE  supp forge/SuppPlatformStuffImpl.getFishType
+     -> mixins/forge/MobBucketItemAccessor.invokeGetFishType()Lnet/minecraft/world/
+        entity/EntityType;  (3 instructions: aload_0, checkcast, invokeinterface,
+        areturn) — @Invoker("getFishType") targets 1.20.1 MobBucketItem.getFishType,
+        GONE on 21.1 (the type lives in `private final EntityType<?> type`,
+        javap'd the runtime srg jar: exact same erased desc).
+  #2  supp forge/SuppPlatformStuffImpl.tryBurningByFire
+     -> mixins/forge/FireBlockAccessor.invokeTryCatchFire(Level,BloodPos... )V
+        (checkcast + invokeinterface, V-return) — target 1.20.1 FireBlock
+        tryCatchFire; 21.1 FireBlock member inventory differs (5.17).
+  #3  supp common/items/LunchBoxItem + common/entities/CannonBallEntity (2 classes,
+      one accessor)
+     -> mixins/LivingEntityAccessor.invokeShouldDropLoot()Z / setUseItem(ItemStack)V
+  #4  supp client/renderers/entities/layers/SlimedLayer
+     -> mixins/AgeableListAccessor.invokeBodyParts()Iterable<ModelPart>
+  #5  supp common/entities/dispenser_minecart/DispenserMinecartEntity
+     -> mixins/AbstractProjectileBehaviorAccessor (4 invokers; sole consumer the
+        5.11 minecart path) — NOTE: its TARGET is the 5.15 SHIM (the accessor
+        resolved against the shim carrier at apply); direct-load still guarded.
+
+ml (moonlight-1.20-2.16.10-forge.jar) — config packages:
+  moonlight-common.mixins.json package net...moonlight.core.mixins
+  moonlight.mixins.json        package net...moonlight.core.mixins.forge
+  #6  ml api/util/DispenserHelper$AdditionalDispenserBehavior (x2 refs)
+     -> core/mixins/accessor/DispenserBlockEntityAccessor.getItems()
+        core/mixins/accessor/DispenserBlockAccessor.getDispenserRegistry() (static)
+  #7  ml core/misc/VillagerBrainEventInternal
+     -> core/mixins/accessor/BrainAccessor.getSensors() /
+        getAvailableBehaviorsByPriority()
+  #8  ml api/integration/configured/CustomConfigScreen
+     -> core/mixins/forge/ButtonAccessor.setOnPress/getOnPress (CLIENT-only site)
+
+ALL NINE accessor interfaces live inside registered mixin packages -> all nine
+direct references are guard-fatal the moment their site EXECUTES. Sites #2..#8 are
+NOT yet on the executed boot path (or sit behind lanes the ladder has not reached);
+only #1 was, and it is the 5.15 stop.
+
+=========================================================================
+3. THE MECHANISM (fallback chosen, for the decoded reason above)
+=========================================================================
+Accessor call-site rewrite over the EXISTING memberretarget |static kind:
+
+  rules/memberretargets.txt (+1 rule):
+  net/mehvahdjukaar/supplementaries/mixins/forge/MobBucketItemAccessor
+    |()Lnet/minecraft/world/entity/EntityType;|invokeGetFishType
+    -> @SHIM@/MobBucketItemBridge
+    |(Lnet/minecraft/world/item/MobBucketItem;)Lnet/minecraft/world/entity/EntityType;|static
+
+  NEW rewriter behavior (rewriter/Rewriter.java, the |static branch): when a
+  static retarget fires, an ADJACENT preceding `checkcast` whose desc is the
+  rule's KEY owner is DROPPED (counter: "mixin phase-5.16: accessor checkcasts
+  dropped=N" in the translate summary). Adjacent-only => no StackMapTable frame
+  can fall between; checkcast is 1->1 so the drop is stack- and frame-neutral.
+  Without the drop the cast would still classload the accessor and trip the guard.
+
+  NEW shim (shims/src/com/modbridge/shim/MobBucketItemBridge.java, built into
+  rules/shims/, injected per-mod to com/modbridge/shim/supplementaries/):
+  static EntityType<?> invokeGetFishType(MobBucketItem) — reflective
+  setAccessible read of MobBucketItem.type (the proven RegistryCompat idiom).
+  21.1 field `private final EntityType<?> type` erases to EXACTLY the accessor
+  method's return desc, so the retarget is stack-identical.
+
+  LESSON (boot 1 of this phase, live): the |static retarget keeps the call
+  site's METHOD NAME (owner+desc swap only) — the first boot NSME'd
+  ("net...MobBucketItemBridge.getFishType") because the bridge method was named
+  getFishType; renamed to invokeGetFishType (the accessor's own method name),
+  rebuilt, boot 2 crossed the wall. The shim-method-name-must-equal-the-site-name
+  rule is now documented in the shim javadoc.
+
+=========================================================================
+4. GATES
+=========================================================================
+- ctor-retarget: all 375 checks passed, result 3/0 (5.15: 373; +2 auto-checks for
+  the relocated MobBucketItemBridge carrier — "relocated MobBucketItemBridge.class:
+  no base-name refs (byte-level)", "no dotted binary names (byte-level)")
+- shims: 5 script checks green (73 shim manifest entries; 5.15: 72 + MobBucketItemBridge)
+- refmap-remapper: 32 checks passed, 3/0
+- srg-resolver: 4/0
+- matrix 16/16: NOT RUN this phase (time-box; the matrix reboots the testbed 4x
+  and the decisive experiment was the supp boot). Named as the first 5.17 action
+  together with the next family sites. The 4 unit gates above were re-run after
+  the shim rename + rebuild and are green with the final agent.
+
+=========================================================================
+5. BOOT (the decisive experiment; testenv/server-121, agent premain retranslates
+   source-1201 with the new fingerprint)
+=========================================================================
+Translate summary: "mixin phase-5.16: accessor checkcasts dropped=2" (the pass
+visits the site class twice per translate; the SITE census is 1 — see the table;
+counter reported as-is). Translated site verified in the installed jar:
+
+  public static net.minecraft.world.entity.EntityType<?> getFishType(
+      net.minecraft.world.item.MobBucketItem);
+    0: aload_0
+    1: invokestatic com/modbridge/shim/supplementaries/MobBucketItemBridge.
+           invokeGetFishType:(Lnet/minecraft/world/item/MobBucketItem;)Lnet/minecraft/
+           world/entity/EntityType;
+    4: areturn
+
+  (the checkcast is GONE; the accessor class can never be referenced here)
+
+Boot 2 log (testenv/server-121/logs/latest.log):
+- "cannot be referenced directly": 0 mentions (5.15: 4)
+- the ladder CROSSED the 5.15 stop (BucketHelper.isFishBucket:134 <-
+  DispenserBehaviorsManager.registerBehaviors:162) and died three lines deeper,
+  same event (moonlight tags-updated -> DispenserHelper.reload), at the NEW wall:
+
+  java.lang.NoSuchMethodError: 'net.minecraft.world.item.alchemy.Potion
+  net.minecraft.world.item.alchemy.PotionContents.getPotion(
+  net.minecraft.world.item.ItemStack)'
+    at moonlight api/fluids/SoftFluidStack.fromItem(SoftFluidStack.java:376)
+    at supp common/block/ModBlockProperties$Topping.fromFluidItem(:200)
+    at supp common/block/ModBlockProperties$Topping.fromItem(:232)
+    at supp .../dispenser/DispenserBehaviorsManager.registerBehaviors(:165)
+    at moonlight api/util/DispenserHelper.lambda$reload$1(DispenserHelper.java:107)
+    ... MoonlightForge.onTagUpdated:66 <- ReloadableServerResources.updateRegistryTags
+
+- then the known fatal: "Failed to load datapacks, can't proceed with server
+  load" (Main.java:258 ExecutionException) — the boot ladder stop for 5.17.
+  (1.20.1 PotionContents.getPotion(ItemStack) is GONE on 21.1; the potion member
+  drift family, moonlight SoftFluidStack lane.)
+
+Non-fatal, unchanged from 5.15: hourglass data parse errors, loot-inject
+"Unknown loot table" validation WARNs, ml FinishedRecipe NCDFE.
+
+=========================================================================
+6. REMAINDER (named 5.17 head)
+=========================================================================
+- the POTION wall (new stop above): 1.20.1 PotionContents.getPotion(ItemStack)
+  vs 21.1 — census + bridge over the moonlight SoftFluidStack lane.
+- the accessor family remainder: sites #2 (FireBlockAccessor, same class as the
+  stop), #3 (LivingEntityAccessor), #6 (ml Dispenser accessors — FIRST ml sites
+  on any registerBehaviors-adjacent path) — each needs its target member pinned
+  on 21.1 (javap) + a bridge shim + one memberretarget line; the mechanism is
+  landed and proven, the work is per-site measurement.
+- matrix 16/16 re-run with the final agent.

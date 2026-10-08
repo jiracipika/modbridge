@@ -242,6 +242,7 @@ public class Rewriter {
     int ctorRetargetsApplied;
     int indySamsApplied;
     int memberRenamesApplied;
+    int accessorCheckcastsDropped;
     int classesTransformed;
 
     public static void main(String[] args) throws Exception {
@@ -964,6 +965,9 @@ public class Rewriter {
                 overrideReturnsApplied, indySamsApplied, fieldUnwrapsApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
+        if (accessorCheckcastsDropped > 0) {
+            System.out.println("mixin phase-5.16: accessor checkcasts dropped=" + accessorCheckcastsDropped);
+        }
         for (String line : neutralizationLog) {
             System.out.println("neutralized mixin: " + line);
         }
@@ -2866,6 +2870,7 @@ public class Rewriter {
                     if (renamed != null) { m.name = renamed; memberRenamesApplied++; }
                     String[] retarget = retargetFor(m.owner, m.desc, m.name);
                     if (retarget != null) {
+                        String retargetKeyOwner = m.owner;
                         m.owner = resolveShimTarget(retarget[0]);
                         m.desc = retarget[1];
                         if ("static".equals(retarget[2])) {
@@ -2874,6 +2879,21 @@ public class Rewriter {
                             // untouched (DFU 6->8 DataResult.getOrThrow(Z,Consumer)/get)
                             m.setOpcode(Opcodes.INVOKESTATIC);
                             m.itf = false;
+                            // phase 5.16 mixin-accessor lane: the shimmed accessor call
+                            // is usually preceded by an adjacent `checkcast <accessor>`
+                            // (javac casts the receiver to the mixin interface). The cast
+                            // would still classload the accessor and trip the mixin
+                            // subsystem's package guard ("in a defined mixin package ...
+                            // cannot be referenced directly"), so drop it when ADJACENT
+                            // (no frame boundary can fall between adjacent instructions)
+                            // and its desc is the retarget's key owner. Stack-neutral:
+                            // checkcast is 1->1, dropping it leaves the receiver as-is.
+                            if (m.getPrevious() instanceof TypeInsnNode cast
+                                    && cast.getOpcode() == Opcodes.CHECKCAST
+                                    && retargetKeyOwner.equals(cast.desc)) {
+                                mn.instructions.remove(cast);
+                                accessorCheckcastsDropped++;
+                            }
                         } else {
                             boolean itf = "interface".equals(retarget[2]);
                             m.setOpcode(itf ? Opcodes.INVOKEINTERFACE : Opcodes.INVOKEVIRTUAL);

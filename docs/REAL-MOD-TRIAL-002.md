@@ -1432,3 +1432,96 @@ supp = 1090 classes, ctor retargets=2, method drops=1, interface repairs=22,
 holder unwraps=22, bare wraps=6, member renames=352, super swaps=10; ml = 489
 classes, ctor retargets=4, method drops=8, interface repairs=40, holder
 unwraps=5, member renames=82.
+
+## Phase 5.16 — the mixin-accessor direct-load wall falls; the reload event crosses
+## the fish-bucket lane (2026-10-07, FINAL campaign day, honest partial)
+
+The 5.15 head-of-list wall is GONE, and the family hypothesis behind it is
+DECODED, not just worked around. javap over the LIVE 21.1 mixin jar
+(sponge-mixin 0.15.2+mixin.0.8.7), MixinProcessor.applyMixins(MixinEnvironment,
+String, ClassNode): the subsystem keeps a PACKAGE GUARD — any class whose name
+falls inside a REGISTERED config's mixin package (longest packageMatch wins)
+throws IllegalClassLoadError on direct load, and the ONLY passthrough in the
+whole method is a superclass check against InjectionPoint /
+ITargetSelectorDynamic. There is NO already-applied release. So 5.15's working
+hypothesis ("an accessor whose APPLY succeeded releases its class for direct
+loads; bridge every accessor's target member so every accessor applies") is
+DEAD as the systematic fix — application state never enters the guard — and
+the 5.14 asymmetry (ml's DispenserBlockAccessor "loaded fine, NSME") was luck
+of LAZY RESOLUTION: classload of the referring class never resolves the
+accessor constant-pool refs until the checkcast/invokeinterface EXECUTES. The
+5.15 "defined mixin package" variant (#3) fired because the refmap lane had
+already neutralized MobBucketItemAccessor out of supplementaries.mixins.json
+(its 1.20.1 target getFishType does not exist on 21.1): the guard's variant #3
+is exactly "in the package, not in the list".
+
+The census (grep + javap over both raw jars) puts the family at NINE direct
+references, every one pointing INTO a registered mixin package and therefore a
+latent guard trip the moment its site executes: supp
+forge/SuppPlatformStuffImpl (MobBucketItemAccessor = the 5.15 stop; SAME CLASS
+also references FireBlockAccessor), supp LunchBoxItem + CannonBallEntity
+(LivingEntityAccessor), SlimedLayer (AgeableListAccessor),
+DispenserMinecartEntity (AbstractProjectileBehaviorAccessor — target resolves
+against the 5.15 shim carrier); ml DispenserHelper$AdditionalDispenserBehavior
+(DispenserBlockEntityAccessor + DispenserBlockAccessor),
+VillagerBrainEventInternal (BrainAccessor), CustomConfigScreen (ButtonAccessor,
+client-only).
+
+What fell (each measured-then-fixed; full table + runbook + the guard bytecode
+walk: testenv/evidence/phase516-mixin-accessor.txt):
+
+1. THE ACCESSOR CALL-SITE BRIDGE (the 5.15-banked fallback, now the landed
+   mechanism): one memberretargets line — owner
+   net/mehvahdjukaar/supplementaries/mixins/forge/MobBucketItemAccessor, name
+   invokeGetFishType (POST-mapSrg; mixin-package classes keep their names),
+   desc ()Lnet/minecraft/world/entity/EntityType; — retargeted |static to the
+   per-mod shim carrier MobBucketItemBridge, whose first parameter IS the
+   receiver (the proven DataResultCompat shape; 21.1 MobBucketItem carries the
+   fish type as `private final EntityType<?> type`, javap'd the runtime jar —
+   erases to EXACTLY the accessor method's return desc, so the swap is
+   stack-identical). Access inside the bridge is the reflective setAccessible
+   read (the RegistryCompat idiom).
+2. THE CHECKCAST DROP (new rewriter behavior, one scoped branch): the |static
+   retarget now removes an ADJACENT preceding `checkcast` whose desc is the
+   rule's key owner — without it the cast would still classload the accessor
+   and the guard would fire anyway. Adjacent-only means no StackMapTable frame
+   can fall between; checkcast is 1->1, so the drop is stack- and frame-neutral.
+   Translate summary prints "mixin phase-5.16: accessor checkcasts dropped=N".
+3. THE SHIM-NAME LESSON (boot 1 of this phase, live NSME): the |static
+   retarget keeps the call site's METHOD NAME — owner+desc swap only. The
+   bridge method must be named invokeGetFishType (the accessor's own name),
+   not getFishType; documented in the shim javadoc for every future family
+   member.
+
+Offline proofs: gates green with the final agent — ctor-retarget 3/3 (375
+checks: 5.15's 373 + the 2 relocation auto-checks for the new carrier), shims
+5/5 (73 manifest entries: 72 + MobBucketItemBridge), refmap 3/3, srg-resolver
+4/4. The translated installed jar shows the site EXACTLY: aload_0 /
+invokestatic MobBucketItemBridge.invokeGetFishType / areturn — the checkcast
+is gone, the accessor class can never be referenced at the site.
+
+LADDER RESULT: "cannot be referenced directly" = 0 mentions (5.15: 4). The
+reload event CROSSED the 5.15 stop (BucketHelper.isFishBucket:134 <-
+DispenserBehaviorsManager.registerBehaviors:162 — the getFishType site is
+THREE instructions that can no longer trip) and died three lines deeper, same
+event, at the 5.17 head:
+
+  NoSuchMethodError: 'net.minecraft.world.item.alchemy.Potion
+  net.minecraft.world.item.alchemy.PotionContents.getPotion(
+  net.minecraft.world.item.ItemStack)'
+    (moonlight SoftFluidStack.fromItem:376 <- supp ModBlockProperties$Topping.
+    fromFluidItem:200 <- Topping.fromItem:232 <-
+    DispenserBehaviorsManager.registerBehaviors:165 <- DispenserHelper.reload:
+    107 <- MoonlightForge.onTagUpdated:66) — the potion member drift family,
+    then the known "Failed to load datapacks" fatal.
+
+Honest partials, named: the accessor family remainder (FireBlockAccessor —
+same supp class as the landed site — LivingEntityAccessor, the two ml
+Dispenser accessors on the registerBehaviors-adjacent path) needs per-site
+target pinning + bridge lines over the PROVEN mechanism; the matrix 16/16
+re-run with the final agent (time-box went to the decisive boot experiment);
+the potion wall above is the next ladder head.
+
+Gates: as above (matrix not run this phase). Counters: supp translate shows
+"accessor checkcasts dropped=2" (the pass visits the site class twice; the
+site census is 1 — counter reported as-is).

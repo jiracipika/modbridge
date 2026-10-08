@@ -269,3 +269,23 @@ net/minecraft/server/packs/repository/Pack|(Ljava/lang/String;Lnet/minecraft/net
 # reconstructs the ResourceKey over minecraft:loot_table. Key is RAW-space owner +
 # POST-mapSrg name (the retarget lookup runs after mapSrg in applyMemberRenames).
 net/minecraft/world/level/storage/loot/entries/LootTableReference|(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Builder;|lootTableReference -> @SHIM-SHARED@/LootCompat|(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/level/storage/loot/entries/LootPoolSingletonContainer$Builder;|static
+
+# --- phase 5.16 mixin-accessor direct-load lane (the 5.15 head-of-list wall): 1.20.1
+# mod code reaches private members through mixin ACCESSOR interfaces; direct loads of
+# classes inside a REGISTERED mixin package are fatal on the 21.1 mixin subsystem
+# regardless of whether the accessor ever applied (MixinProcessor.applyMixins keeps a
+# package guard whose only exempt superclass is InjectionPoint/ITargetSelectorDynamic
+# — javap'd sponge-mixin 0.15.2+mixin.0.8.7; no already-applied passthrough), and this
+# project's refmap lane had already neutralized MobBucketItemAccessor out of the
+# config (its 1.20.1 target getFishType is gone on 21.1), so the load hit the
+# "in a defined mixin package ... cannot be referenced directly" IllegalClassLoadError
+# (live boot 5.15: supp forge/SuppPlatformStuffImpl.getFishType checkcast +
+# invokeinterface invokeGetFishType, via BucketHelper.isFishBucket <-
+# DispenserBehaviorsManager.registerBehaviors). The retarget turns the accessor call
+# into a static bridge whose first parameter IS the receiver (same pops/pushes) and
+# the pass now DROPS the adjacent checkcast to the accessor (classload guard can
+# never fire). Access inside the bridge: 21.1 MobBucketItem carries the entity type
+# as `private final EntityType<?> type` (javap'd the runtime srg jar) — reflective
+# setAccessible read, the proven shim idiom (RegistryCompat). Key is RAW-space owner
+# (mixin-package classes keep their names) + POST-mapSrg name.
+net/mehvahdjukaar/supplementaries/mixins/forge/MobBucketItemAccessor|()Lnet/minecraft/world/entity/EntityType;|invokeGetFishType -> @SHIM@/MobBucketItemBridge|(Lnet/minecraft/world/item/MobBucketItem;)Lnet/minecraft/world/entity/EntityType;|static

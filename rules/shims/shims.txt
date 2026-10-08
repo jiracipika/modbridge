@@ -26,6 +26,7 @@ com/modbridge/shim/ItemStackTagCompat
 com/modbridge/shim/LivingTickEvent
 com/modbridge/shim/LootCompat
 com/modbridge/shim/MessageHandler
+com/modbridge/shim/MobBucketItemBridge
 com/modbridge/shim/MobEffectCompat
 com/modbridge/shim/NetworkDirection
 com/modbridge/shim/NetworkEvent$Context
