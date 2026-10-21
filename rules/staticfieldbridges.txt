@@ -1,0 +1,17 @@
+# phase 5.20 (data-driven-enchantment whale, first layer): 1.21 removed the
+# BuiltInRegistries.ENCHANTMENT static field (enchantments went datapack-driven;
+# javap: only the ENCHANTMENT_*_TYPE codec registries survive as statics). The
+# bridge returns the LIVE server-side instance instead of the dead static.
+# GETSTATIC -> INVOKESTATIC with an IDENTICAL erased descriptor
+# (Lnet/minecraft/core/Registry;) => stack + StackMapTable frames byte-identical.
+#
+# Keys are FINAL-space (this pass runs after remapClass: production 1.20.1 mods
+# reference the field as the SRG id f_256876_ and the SRG table renames it to
+# ENCHANTMENT before this pass sees it).
+#
+# Census 2026-10-21 (javap over both trial jars): exactly 2 GETSTATIC sites, both
+# in supp common/items/loot/CurseLootFunction.rebuild (iterator + wrapAsHolder on
+# the result — both exist unchanged on the 21.1 Registry interface). The
+# Registries.ENCHANTMENT ResourceKey refs (f_256762_, 4 sites) are a DIFFERENT
+# field that still exists on 21.1 — deliberately untouched.
+net/minecraft/core/registries/BuiltInRegistries|ENCHANTMENT|Lnet/minecraft/core/Registry; -> @SHIM@/EnchantmentRegistryCompat|enchantmentRegistry

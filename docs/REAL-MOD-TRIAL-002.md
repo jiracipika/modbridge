@@ -1665,3 +1665,40 @@ cache and replayed the previous wall — purge modbridge-cache/1.21.1 between
 agent rebuilds.
 
 Evidence: testenv/evidence/phase518-519-food-dispense.txt.
+
+## Phase 5.20 (first layer) — the data-driven-enchantment wall falls (2026-10-21, CampaignGoal)
+
+The 5.20 head (`NoSuchFieldError BuiltInRegistries.ENCHANTMENT` in supp
+`CurseLootFunction.rebuild` during the tag-update wave) fell with ONE new
+rewriter mechanism + one shim + two rules. Full census, boot ladder and gates:
+`testenv/evidence/phase520-enchantment-registry.txt`.
+
+- **Census**: exactly 2 GETSTATIC sites / 1 class (the `f_256876_` field); the
+  `Registries.ENCHANTMENT` ResourceKey refs are a different, still-existing field;
+  `isCurse` (m_6589_) has exactly 1 call site; `wrapAsHolder` (6 sites) survives
+  on 21.1 untouched. Upstream supplementaries 1.21.1 **deleted** the feature
+  rather than port it — no strategy to copy.
+- **NEW pass** `rewriteStaticFieldBridges` (rules/staticfieldbridges.txt,
+  optional file): GETSTATIC of a removed static-registry field → INVOKESTATIC on
+  a shim returning the LIVE instance. The erased return equals the field desc ⇒
+  stack + frames byte-identical. Keys are FINAL-space (SRG renames first).
+- **Shim** `EnchantmentRegistryCompat`: live registry
+  (`ServerLifecycleHooks` → `registryOrThrow(Registries.ENCHANTMENT)`); pre-server
+  (the tag wave runs in Main before any server instance — measured: the first
+  boot died on the bridge's own fail-loud guard) it serves an EMPTY
+  `MappedRegistry` + one-time loud warn = documented inert (upstream deleted it;
+  the loot function's own `CURSES.isEmpty()` branch no-ops cleanly). Plus the
+  `isCurse` bridge: Enchantment is a final record on 21.1 with no curse member —
+  the semantic is the vanilla `minecraft:curse` tag through the same registry.
+- **Link-time test catch**: the pass initially wrote the call desc as the bare
+  field desc — illegal as a method descriptor; the in-JVM run proof caught it
+  (ClassFormatError at define). The gate now pins `"()" + fieldDesc`.
+- **Gate**: fieldunwraps LOOKUP key order had been silently flipped by the 5.20
+  insertion (desc/name) — test-ctor-retarget's 381-check gate caught it.
+- **Result**: tag wave crosses, "Failed to load datapacks" gone; matrix 16/16;
+  unit gates 381 + 24 + shims/refmap/srg green; shim manifest 76.
+- **NEW HEAD (2+ frames deeper)**: `DedicatedServer.initServer` →
+  `ServerAboutToStartEvent` → moonlight
+  `SoftFluidInternalImpl.registerExistingVanillaFluids` →
+  **ForgeFlowingFluid$Flowing** (the removed forge-fluid family — next session's
+  whale: moonlight's SoftFluid lane).

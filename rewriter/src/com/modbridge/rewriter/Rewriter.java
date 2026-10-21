@@ -186,6 +186,12 @@ public class Rewriter {
      *  (keys FINAL-space: matched post-mapSrg, after remapClass). */
     final Map<String, String[]> fieldUnwraps = new HashMap<>();
     int fieldUnwrapsApplied;
+    /** GETSTATIC -> static-bridge call sites (rules/staticfieldbridges.txt, phase 5.20):
+     *  owner|name|desc (FINAL space, post remapClass — SRG ids rename first) ->
+     *  shimOwner|shimMethod. The bridge's erased return equals the field desc, so
+     *  stack + frames stay byte-identical. See rewriteStaticFieldBridges. */
+    final Map<String, String[]> staticFieldBridges = new HashMap<>();
+    int staticFieldBridgesApplied;
     /** method-body drops for whole methods whose 1.20.1 semantics are already covered
      *  elsewhere on 21.1 (or are documented no-ops): owner|desc|name -> typed return */
     final Set<String> methodDrops = new HashSet<>();
@@ -280,6 +286,7 @@ public class Rewriter {
         addIndySamRules(readLinesOptional(rulesDir.resolve("indysams.txt")));
         addOverrideReturnRules(readLinesOptional(rulesDir.resolve("overridereturns.txt")));
         addFieldUnwrapRules(readLinesOptional(rulesDir.resolve("fieldunwraps.txt")));
+        addStaticFieldBridgeRules(readLinesOptional(rulesDir.resolve("staticfieldbridges.txt")));
         loadShimsFromDir(rulesDir.resolve("shims"));
         printRuleStats();
     }
@@ -305,6 +312,7 @@ public class Rewriter {
         addIndySamRules(resourceLinesOptional("/rules/indysams.txt"));
         addOverrideReturnRules(resourceLinesOptional("/rules/overridereturns.txt"));
         addFieldUnwrapRules(resourceLinesOptional("/rules/fieldunwraps.txt"));
+        addStaticFieldBridgeRules(resourceLinesOptional("/rules/staticfieldbridges.txt"));
         loadShimsFromClasspath("/rules/shims");
         printRuleStats();
     }
@@ -392,13 +400,13 @@ public class Rewriter {
     }
 
     private void printRuleStats() {
-        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d unwrap, %d wrap, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims, %d shared, %d indy-sams, %d override-returns%n",
+        System.out.printf("rules: %d package, %d type, %d member, %d desc, %d srg, %d retarget, %d unwrap, %d wrap, %d ctor-retarget, %d method-drops, %d superswaps, %d classlist, %d interfaces, %d mojrenames, %d member-targets classes, %d shims, %d shared, %d indy-sams, %d override-returns, %d static-field-bridges%n",
                 packageRenames.size(), typeRenames.size(), memberRenames.size(),
                 memberDescRenames.size(), srgMemberRenames.size(), memberRetargets.size(),
                 holderUnwraps.size(), bareWraps.size(), ctorRetargets.size(), methodDrops.size(), superSwaps.size(), classlist.size(),
                 interfaces1211.size(),
                 mojMemberRenames.size(), memberTargets.size(), shims.size(), sharedShims.size(),
-                indySams.size(), overrideReturns.size());
+                indySams.size(), overrideReturns.size(), staticFieldBridges.size());
     }
 
     /** loads the shim manifest + bytecode from a rules directory (CLI mode) */
@@ -960,10 +968,10 @@ public class Rewriter {
         }
 
         verifyNoForgeRefs(out);
-        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, holder unwraps=%d, bare wraps=%d, member renames=%d, super swaps=%d, override returns=%d, indy sams=%d, field unwraps=%d%n",
+        System.out.printf("translated %d classes; fml chains spliced=%d, ResourceLocation ctors rewritten=%d, ctor retargets=%d, method drops=%d, interface repairs=%d, holder unwraps=%d, bare wraps=%d, member renames=%d, super swaps=%d, override returns=%d, indy sams=%d, field unwraps=%d, static field bridges=%d%n",
                 classesTransformed, fmlChainsSpliced, resourceLocationCtors, ctorRetargetsApplied,
                 methodDropsApplied, interfaceRepairsApplied, holderUnwrapsApplied, bareWrapsApplied, memberRenamesApplied, superswapsApplied,
-                overrideReturnsApplied, indySamsApplied, fieldUnwrapsApplied);
+                overrideReturnsApplied, indySamsApplied, fieldUnwrapsApplied, staticFieldBridgesApplied);
         System.out.printf("mixin phase-4: refmaps remapped=%d, mixin classes seen=%d, neutralized=%d, nested jars dropped=%d%n",
                 refmapsRemapped, mixinClassesSeen, neutralizedMixins.size(), nestedJarsDropped);
         if (accessorCheckcastsDropped > 0) {            System.out.println("mixin phase-5.16: accessor checkcasts dropped=" + accessorCheckcastsDropped);
@@ -1034,6 +1042,9 @@ public class Rewriter {
         // same ordering contract: fieldunwraps keys are FINAL space (post-mapSrg field
         // names — SHIPWRECK_TREASURE etc. — the old 1.20.1 desc is unchanged by remap)
         rewriteFieldUnwraps(cn);
+        // same ordering contract as fieldunwraps: staticfieldbridges keys are FINAL
+        // space (the SRG id f_256876_ renames to ENCHANTMENT inside applyMemberRenames)
+        rewriteStaticFieldBridges(cn);
         // pinned single-site pass (moonlight MapRegistry, the villager-trades dispatch):
         // names are final-space identical (no renames touch them)
         fixMapRegistryDispatch(cn);
@@ -2685,6 +2696,49 @@ public class Rewriter {
                         rule[0], rule[1], rule[2], false));
                 fieldUnwrapsApplied++;
             }
+        }
+    }
+
+    /** static-field-bridge pass (rules/staticfieldbridges.txt, phase 5.20): fields
+     *  REMOVED from the 21.1 static registries (the data-driven-enchantment whale —
+     *  BuiltInRegistries.ENCHANTMENT) become INVOKESTATIC on a shim that returns the
+     *  live instance. The bridge's erased return desc EQUALS the rule's field desc by
+     *  construction (the rule carries it in the key), so the pushed type, stack shape
+     *  and every StackMapTable frame stay byte-identical — the fieldunwraps argument
+     *  with nothing to repair. Keys are FINAL-space: the pass runs after remapClass
+     *  (production mods reference the field as the SRG id f_256876_; the SRG table
+     *  renames it to ENCHANTMENT inside applyMemberRenames before this sees it). */
+    void rewriteStaticFieldBridges(ClassNode cn) {
+        if (staticFieldBridges.isEmpty()) return;
+        for (MethodNode mn : cn.methods) {
+            for (AbstractInsnNode n : mn.instructions.toArray()) {
+                if (!(n instanceof FieldInsnNode f) || f.getOpcode() != Opcodes.GETSTATIC) continue;
+                String[] rule = staticFieldBridges.get(f.owner + "|" + f.name + "|" + f.desc);
+                if (rule == null) continue;
+                // the METHOD desc is ()+fieldDesc (no args, the field desc as return):
+                // a bare field desc is not a legal method descriptor (the link-time
+                // test caught exactly this — ClassFormatError on define)
+                mn.instructions.set(f, new MethodInsnNode(Opcodes.INVOKESTATIC,
+                        resolveShimTarget(rule[0]), rule[1], "()" + f.desc, false));
+                staticFieldBridgesApplied++;
+            }
+        }
+    }
+
+    /** loads static-field-bridge rules (optional file — absent = pass disabled):
+     *  owner|name|desc -> shimOwner|shimMethod. Any other shape is a rule-format
+     *  error (the shimMethod's erased return must equal the field desc; that is the
+     *  frame-safety invariant, enforced here only as presence — the test pins the
+     *  shipped rule's desc equality). */
+    void addStaticFieldBridgeRules(List<String> lines) throws IOException {
+        for (String line : lines) {
+            if (line.startsWith("#") || line.isBlank()) continue;
+            String[] sides = line.split("->");
+            if (sides.length != 2) throw new IOException("bad staticfieldbridges line: " + line);
+            String[] key = sides[0].trim().split("\\|");
+            String[] val = sides[1].trim().split("\\|");
+            if (key.length != 3 || val.length != 2) throw new IOException("bad staticfieldbridges line: " + line);
+            staticFieldBridges.put(key[0] + "|" + key[1] + "|" + key[2], val);
         }
     }
 

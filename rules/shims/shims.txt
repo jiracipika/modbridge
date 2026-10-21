@@ -15,6 +15,7 @@ com/modbridge/shim/DyeableLeatherItem
 com/modbridge/shim/Enchantment$Rarity
 com/modbridge/shim/EnchantmentCategory
 com/modbridge/shim/EnchantmentCompat
+com/modbridge/shim/EnchantmentRegistryCompat
 com/modbridge/shim/EntityItemPickupEvent
 com/modbridge/shim/EntityItemPickupEvent$Result
 com/modbridge/shim/EntryWrapperCompat

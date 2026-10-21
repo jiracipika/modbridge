@@ -320,3 +320,13 @@ net/minecraft/world/level/storage/loot/entries/LootTableReference|(Lnet/minecraf
 # setAccessible read, the proven shim idiom (RegistryCompat). Key is RAW-space owner
 # (mixin-package classes keep their names) + POST-mapSrg name.
 net/mehvahdjukaar/supplementaries/mixins/forge/MobBucketItemAccessor|()Lnet/minecraft/world/entity/EntityType;|invokeGetFishType -> @SHIM@/MobBucketItemBridge|(Lnet/minecraft/world/item/MobBucketItem;)Lnet/minecraft/world/entity/EntityType;|static
+
+# phase 5.20 (enchantment-registry whale, second layer — same wall as
+# staticfieldbridges.txt): 1.20.1 Enchantment.isCurse() (m_6589_) is GONE on 21.1 —
+# Enchantment became a final record with no curse member. The 21.1 semantic is the
+# vanilla minecraft:curse enchantment tag, tested through the same live registry the
+# field bridge returns (EnchantmentRegistryCompat.isCurse). |static retarget keeps
+# the call-site name (post-SRG-rename "isCurse"); receiver-as-first-param, stack and
+# frames identical. Census 2026-10-21: exactly ONE call site (supp CurseLootFunction
+# rebuild, owner = Enchantment exactly — no subclass-owner "*" fallback needed).
+net/minecraft/world/item/enchantment/Enchantment|()Z|isCurse -> @SHIM@/EnchantmentRegistryCompat|(Lnet/minecraft/world/item/enchantment/Enchantment;)Z|static
